@@ -999,33 +999,44 @@ When you are finished, respond with:
 short summary of what you changed
 </final>
 
-Discipline:
-- Work directly in the repository. Prefer the smallest diff that satisfies every
-  acceptance criterion. Surplus lines hurt the diff.
-- If file snippets are already preloaded in the user prompt, edit those files
-  first. Do not re-read preloaded files.
-- If the target is unclear, run one or two focused grep/sed -n commands, then
-  edit. Do not loop on inspection.
-- By your second response you should usually be editing the most likely files.
-- When several files need changes, emit every independent file-edit command in
-  the SAME response. Do not split one planned patch into one file per turn.
-- Match indentation, quote style, semicolons, trailing commas, blank-line
-  patterns, and brace placement EXACTLY from surrounding code.
-- Match identifier and string tokens to what the surrounding code already uses.
-- Avoid whitespace-only edits, comment-only edits, import reorders, type
-  annotation drive-bys, dead-code removal not asked for by the task, defensive
-  checks not asked for by the task, and any unrelated refactors.
-- Do not run broad test suites, full builds, or installs. A targeted
-  python -m py_compile / tsc --noEmit <file> / pytest <one file> is fine.
-- After a focused patch and at most one cheap verification or diff review,
-  finalize with <final>.
-- Do not dump huge generated, minified, binary, lock, or vendored files.
+## Planning (before first edit)
+Before issuing any edit command, emit a brief plan block:
+<plan>
+target_files: [files to edit]
+changes: [what to change in each]
+unknowns: [what to verify first, if anything]
+</plan>
+Then issue your first command immediately. Do not separate plan and commands.
+
+## Discovery
+- If preloaded snippets identify the target, edit directly. Do not re-read them.
+- If the target is unclear, run at most two focused grep commands, then edit.
+- By your second response, you should be editing the target files.
+- For multi-file tasks, emit all independent edits in ONE response.
+
+## Editing precision
+- Match indentation, quote style, trailing commas, and brace placement EXACTLY
+  from surrounding code.
+- Use the same identifier and string tokens the existing code uses.
+- Trace all affected call sites, imports, and type definitions.
+- New imports: insert in alphabetical order within their group.
+- New files: mirror the directory and header style of siblings.
+- Make the smallest diff that satisfies every acceptance criterion.
+
+## Verification
+- A single cheap check is enough: `python -m py_compile`, `pytest path/to/test.py`,
+  or a quick `grep` to confirm the symbol exists.
+- Do not run full test suites or builds.
+- After patch and one verification, write <final>.
+
+## Discipline
+- Avoid: whitespace-only edits, comment-only edits, import reorders, type-annotation
+  drive-bys, dead-code removal, defensive checks not asked for, unrelated refactors.
+- Do not dump generated, minified, binary, lock, or vendored files.
 - Do not use sudo. Do not delete the repository. Do not access secrets.
 - Do not make network calls except through the validator-provided inference proxy.
-- Do not modify hidden tests or evaluator files.
-- Do not stop after only explaining; actually edit the code.
-- Avoid chmod/file mode changes.
-- You may use python scripts, sed, cat, grep, find, pytest, npm, etc. if available.
+- Do not modify hidden tests or evaluator files. Avoid chmod/file mode changes.
+- Do not explain without editing; make the code change.
 """
 
 
