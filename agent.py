@@ -83,7 +83,7 @@ DEFAULT_MAX_TOKENS = int(os.environ.get("AGENT_MAX_TOKENS", "6144"))
 
 MAX_OBSERVATION_CHARS = int(os.environ.get("AGENT_MAX_OBSERVATION_CHARS", "9000"))
 MAX_TOTAL_LOG_CHARS = int(os.environ.get("AGENT_MAX_TOTAL_LOG_CHARS", "180000"))
-MAX_CONVERSATION_CHARS = int(os.environ.get("AGENT_MAX_CONVERSATION_CHARS", "60000"))
+MAX_CONVERSATION_CHARS = 60000
 MAX_PRELOADED_CONTEXT_CHARS = 32000
 MAX_PRELOADED_FILES = 10
 MAX_NO_COMMAND_REPAIRS = 3
@@ -1030,6 +1030,25 @@ Discipline:
 - Do not stop after only explaining; actually edit the code.
 - Avoid chmod/file mode changes.
 - You may use python scripts, sed, cat, grep, find, pytest, npm, etc. if available.
+
+Root-cause discipline — before your FIRST <command>, output this analysis block:
+
+<analysis>
+ROOT_CAUSE: [The specific bug/gap at its origin — not the symptom]
+REQUIRED_FILES: [Every file that must change to fully fix this]
+DOWNSTREAM_CALLERS: [Functions/methods/modules that call or import changed code]
+</analysis>
+
+Then immediately issue the first <command>(s) in the SAME response. Do NOT
+split analysis and commands across turns — that wastes a step.
+
+Completeness rules:
+- After editing the primary file(s), always check whether callers, importers,
+  or downstream consumers of changed code also need updating.
+- When in doubt, add the caller update — missing an update costs more than
+  a thorough fix.
+- If multiple files need changes, emit every independent file-edit command
+  in the SAME response.
 """
 
 
@@ -1037,12 +1056,9 @@ def build_initial_user_prompt(issue: str, repo_summary: str, preloaded_context: 
     context_section = ""
     if preloaded_context.strip():
         context_section = f"""
-Preloaded likely relevant tracked-file snippets:
+Preloaded likely relevant tracked-file snippets (already read for you — do not re-read):
 
 {preloaded_context}
-
-These files have already been read for you. Re-reading them burns the duel
-budget; patch them directly unless a needed detail is missing.
 """
 
     return f"""Fix this issue:
@@ -1053,27 +1069,15 @@ Repository summary:
 
 {repo_summary}
 {context_section}
+Before planning, read the ENTIRE issue above and identify every requirement (there may be more than one). Your patch must satisfy ALL of them — the LLM judge penalizes incomplete solutions.
 
-Root-cause discipline -- before your FIRST <command>, output this analysis block:
+Strategy: the fix is typically in ONE specific function or block. Identify it precisely, then make the minimal edit that fixes the ROOT CAUSE.
 
-<analysis>
-ROOT_CAUSE: [The specific bug/gap at its origin -- not the symptom]
-REQUIRED_FILES: [Every file that must change to fully fix this]
-DOWNSTREAM_CALLERS: [Functions/methods/modules that call or import changed code]
-</analysis>
+If the preloaded snippets show the target code, edit them directly — do not re-read or run broad searches first. If the target is unclear, run ONE or TWO focused grep/sed -n commands to locate it, then edit immediately.
 
-Then immediately issue the first <command>(s) in the SAME response. Do NOT
-split analysis and commands across turns -- that wastes a step.
+When multiple files need edits, include EVERY independent edit command in the SAME response. Do not split edits across turns.
 
-Completeness rules:
-- After editing the primary file(s), always check whether callers, importers,
-  or downstream consumers of changed code also need updating.
-- When in doubt, add the caller update -- missing an update costs more than
-  a thorough fix.
-- If multiple files need changes, emit every independent file-edit command
-  in the SAME response.
-- Do not re-read preloaded files. Do not run broad test suites before editing.
-- After a patch exists, run one cheap verification if possible, then <final>.
+After patching, run the most targeted test available (`pytest tests/test_X.py -x -q`, `go test ./...`, etc.) to verify correctness. Then finish with <final>...</final>.
 """
 
 
