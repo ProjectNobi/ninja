@@ -116,7 +116,7 @@ MAX_TEST_FIX_TURNS = 1     # repair the companion test we ran ourselves
 MAX_COVERAGE_NUDGES = 1    # tell model which issue-mentioned paths are still untouched
 MAX_CRITERIA_NUDGES = 1    # tell model which issue acceptance-criteria look unaddressed
 MAX_HAIL_MARY_TURNS = 1    # last-resort: force a real edit when patch is empty after everything
-MAX_TOTAL_REFINEMENT_TURNS = 3  # v16: one extra refinement for scope/import fix; king uses 2
+MAX_TOTAL_REFINEMENT_TURNS = 4  # v14: raised to 4 for deliverable + frontend gates
                                 # cap total refinement turns across all gates (hail-mary excepted)
 _STYLE_HINT_BUDGET = 600   # VladaWebDev PR#250: cap on detected-style block in preloaded context
 
@@ -194,26 +194,6 @@ class AgentResult:
 # -----------------------------
 # Utility
 # -----------------------------
-
-
-# v16: Suspicious-phrase guard -- prevents automatic judge score=0 from
-# domain-blocklist lines or known bad substrings in the generated patch.
-import re as _re_v16
-
-_DOMAIN_BLOCKLIST_RE = _re_v16.compile(
-    r'^\+.*\b[a-z0-9\-]+\.[a-z]{2,6}\s+-\d',
-    _re_v16.MULTILINE | _re_v16.IGNORECASE
-)
-_SUSPICIOUS_KEYWORDS = frozenset(["cograder", "cogora", "autograder", "rubric_scorer"])
-
-
-def _scan_suspicious_phrases(patch: str) -> bool:
-    """Return True if patch contains auto-fail patterns (triggers judge score=0)."""
-    added = "\n".join(line for line in patch.splitlines() if line.startswith("+"))
-    if _DOMAIN_BLOCKLIST_RE.search(added):
-        return True
-    return any(kw in added.lower() for kw in _SUSPICIOUS_KEYWORDS)
-
 
 def _truncate(text: str, max_chars: int) -> str:
     if len(text) <= max_chars:
@@ -1065,7 +1045,7 @@ def _extract_relevant_regions(
     max_chars: int,
     *,
     ctx_before: int = 8,
-    ctx_after: int = 12,
+    ctx_after: int = 18,
 ) -> str:
     """Return windows around lines matching any needle, capped at `max_chars`.
 
@@ -1479,6 +1459,23 @@ def _check_brace_balance_one(repo: Path, relative_path: str) -> Optional[str]:
         return f"{relative_path}: brace imbalance ({', '.join(diffs)})"
     return None
 
+def _extract_named_deliverables(task_text: str) -> list:
+    import re as _re
+    candidates = _re.findall(r'([\w/.-]+\.(?:sh|py|ts|tsx|js|jsx|vue|java|go|rb|json|yml|yaml|md|html|css|sql))', task_text, _re.I)
+    seen, result = set(), []
+    for c in candidates:
+        base = c.split('/')[-1].lower()
+        if base not in seen and len(base) > 3:
+            seen.add(base); result.append(c)
+    return result[:6]
+
+
+def _check_deliverable_coverage(patch: str, deliverables: list) -> list:
+    import re as _re
+    diff_files = _re.findall(r'^(?:\+\+\+|---) [ab]/(.+)$', patch, _re.M)
+    bases = {f.split('/')[-1].lower() for f in diff_files}
+    return [d for d in deliverables if d.split('/')[-1].lower() not in bases][:3]
+
 
 def _check_syntax(repo: Path, patch: str) -> List[str]:
     """Best-effort multi-language syntax check on touched files.
@@ -1581,6 +1578,31 @@ def _find_test_partner(relative_path: str, tracked: set) -> Optional[str]:
         if candidate in tracked and _context_file_allowed(candidate):
             return candidate
     return None
+
+
+def _find_issue_tests(repo: Path, task_text: str) -> List[str]:
+    """Find test files explicitly mentioned or implied by the task description.
+    Different from _find_test_partner which works from source files.
+    Returns list of relative paths (max 2), empty if none found."""
+    import re as _re
+    candidates: List[str] = []
+    # Match explicit test file patterns in the task
+    for m in _re.finditer(
+        r"(test[\w/\-]*\.(?:js|ts|py|rb|go|java)|[\w/\-]*\.test\.\w+|[\w/\-]*_test\.\w+|[\w/\-]*spec\.\w+)",
+        task_text, _re.I
+    ):
+        path = m.group(1).strip("./")
+        full = repo / path
+        if full.exists():
+            candidates.append(path)
+    # Deduplicate and return
+    seen: set = set()
+    valid: List[str] = []
+    for c in candidates:
+        if c not in seen:
+            seen.add(c)
+            valid.append(c)
+    return valid[:2]
 
 
 def _augment_with_test_partners(files: List[str], tracked: set) -> List[str]:
@@ -1925,6 +1947,44 @@ def _unaddressed_criteria(patch: str, issue_text: str) -> List[str]:
     return missing
 
 
+# Tuples of frontend framework signals and file extensions
+_FE_TASK_SIGNALS = (
+    ".vue", "vue component", "react component", "next.js", "nextjs",
+    "page.tsx", "page.jsx", "svelte", "angular component",
+    "nuxt", "remix route", "gatsby page",
+)
+_FE_ONLY_EXTS = frozenset({".vue", ".jsx", ".tsx", ".svelte"})
+_BE_ONLY_EXTS = frozenset({".py", ".java", ".rb", ".go", ".php", ".rs", ".cs", ".kt"})
+
+
+def _detect_frontend_gap(task_text: str, patch: str) -> str:
+    """Return a coaching hint when the task requires frontend changes but the
+    patch only touches backend files. Empty string means no gap detected.
+
+    Rationale: ~3 rounds per duel lost because we implement Spring Boot / FastAPI
+    but miss the required Vue/React/Next.js page. King catches this; we don't.
+    """
+    task_lower = task_text.lower()
+    fe_signals = sum(1 for sig in _FE_TASK_SIGNALS if sig in task_lower)
+    if fe_signals < 1:
+        return ""
+    # Check the diff header lines
+    import re as _re
+    diff_files = _re.findall(r"^(?:\+\+\+|---)\s+[ab]/(\S+)", patch, _re.M)
+    changed_ext_set = {os.path.splitext(f)[1].lower() for f in diff_files}
+    # If any frontend extension is changed, no gap
+    if changed_ext_set & _FE_ONLY_EXTS:
+        return ""
+    # If all changed files are backend, report gap
+    if changed_ext_set and changed_ext_set.issubset(_BE_ONLY_EXTS):
+        return (
+            f"[Frontend gap detected: task mentions '{next(s for s in _FE_TASK_SIGNALS if s in task_lower)}' "
+            f"but patch only touches backend files ({', '.join(sorted(changed_ext_set))}). "
+            f"Ensure required frontend pages/components are also created or modified.]"
+        )
+    return ""
+
+
 # -----------------------------
 # Issue-symbol grep ranking
 # -----------------------------
@@ -2187,16 +2247,7 @@ Changed [file/function] to [brief root-cause fix]. Added/updated [test] if appli
 
 Keep it short. No diffs, markdown, speculation, or extra commands after successful verification.
 
-You are producing the smallest complete patch most likely to match the hidden reference and pass hidden validators. Find the owner. Fix the root cause. Preserve everything else. Verify narrowly. Finish.
-
-## Scope Completeness
-When the issue describes multiple areas (e.g. UI + route + model + migration), your patch MUST touch ALL of them.
-
-## Import Hygiene
-After adding any new function or symbol, verify the corresponding import exists in the same file.
-
-## Diff Discipline
-Every added or removed line must directly serve the fix. Formatting, whitespace, and reordering changes not required by the fix are penalised.'''
+You are producing the smallest complete patch most likely to match the hidden reference and pass hidden validators. Find the owner. Fix the root cause. Preserve everything else. Verify narrowly. Finish.'''
 
 _PRELOAD_BEGIN_MARKER = "<!-- preloaded-context-begin -->"
 _PRELOAD_END_MARKER = "<!-- preloaded-context-end -->"
@@ -2689,6 +2740,7 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
     syntax_fix_turns_used = 0
     test_fix_turns_used = 0
     coverage_nudges_used = 0
+    deliverable_nudges_used = 0
     criteria_nudges_used = 0
     hail_mary_turns_used = 0
     total_refinement_turns_used = 0  # ninjaking66 PR#268: total cap across all gates (hail-mary excluded)
@@ -2735,7 +2787,7 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
         (we know the patch parses) but BEFORE coverage/criteria/self-check
         (those are heuristic; test is ground truth from a real runner).
         """
-        nonlocal polish_turns_used, self_check_turns_used, syntax_fix_turns_used, test_fix_turns_used, coverage_nudges_used, criteria_nudges_used, hail_mary_turns_used, total_refinement_turns_used
+        nonlocal polish_turns_used, deliverable_nudges_used, self_check_turns_used, syntax_fix_turns_used, test_fix_turns_used, coverage_nudges_used, criteria_nudges_used, hail_mary_turns_used, total_refinement_turns_used
         patch = get_patch(repo)
 
         # v20 edge — close the architectural hole at the empty-patch early
@@ -2834,6 +2886,27 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
                 )
                 return True
 
+        # v14: named-deliverable coverage gate
+        _delvs = _extract_named_deliverables(issue)
+        if _delvs and deliverable_nudges_used < 1:
+            _missing = _check_deliverable_coverage(patch, _delvs)
+            if _missing and total_refinement_turns_used < MAX_TOTAL_REFINEMENT_TURNS:
+                deliverable_nudges_used += 1
+                total_refinement_turns_used += 1
+                queue_refinement_turn(assistant_text, 'Task names these files not in your patch: ' + ', '.join(_missing[:3]) + '. Add them.', 'MISSING_DELIVERABLES')
+                return True
+
+                # v11: frontend gap detection
+        _fe_hint = _detect_frontend_gap(issue, patch)
+        if _fe_hint and total_refinement_turns_used < MAX_TOTAL_REFINEMENT_TURNS:
+            total_refinement_turns_used += 1
+            queue_refinement_turn(
+                assistant_text,
+                _fe_hint,
+                "FE_GAP_DETECTED",
+            )
+            return True
+
         if self_check_turns_used < MAX_SELF_CHECK_TURNS:
             self_check_turns_used += 1
             total_refinement_turns_used += 1
@@ -2858,8 +2931,6 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
             {"role": "user", "content": build_initial_user_prompt(issue, repo_summary, preloaded_context)},
         ]
         initial_preload_stripped = False
-
-        _wall_start = time.monotonic()
 
         for step in range(1, max_steps + 1):
             logs.append(f"\n\n===== STEP {step} =====\n")
@@ -3049,9 +3120,6 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
             logs.append("\nPATCH_RETURN:\nReturning the best patch produced within the step budget.")
             success = True
         step_count = len([x for x in logs if x.startswith("\n\n===== STEP")])
-        # v16: suspicious-phrase guard
-        if patch and _scan_suspicious_phrases(patch):
-            logs.append('\n[v16-guard] WARNING: patch may trigger judge auto-zero (suspicious phrase)\n')
         return AgentResult(
             patch=patch,
             logs=_safe_join_logs(logs),
