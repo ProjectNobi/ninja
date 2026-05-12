@@ -32,16 +32,26 @@
 
 ### 1.1 Environment & Registration
 
-- [ ] Confirm your hotkey is registered on SN66 (netuid 66):
-  ```bash
-  btcli subnet metagraph --netuid 66 --subtensor.network finney | grep <your-coldkey>
+> ❗️ **L-SN66-REGISTER-AFTER-CI-1 — HARD RULE: Never register a hotkey before GitHub CI passes.**
+> Registration costs ∼τ0.19 and is **non-refundable**. If CI fails after you register, that TAO is gone.
+> The correct order is:
+> 1. Create hotkey (free, just a local keypair)
+> 2. Push branch → open PR → **wait for ALL 3 CI checks to show ✅ green**
+> 3. **ONLY THEN:** register the hotkey on-chain
+> 4. Commit SHA on-chain
+>
+> Never skip step 2. Even if local checks all pass, GitHub CI can still fail (line number shifts, scope guard edge cases, judge failures). TAO is saved by waiting 2-3 minutes for CI to run.
+
+- [ ] **Create hotkey keypair** (free — no registration yet):
+  ```python
+  wallet = bt.Wallet(name='T68Coldkey', hotkey='sn66-vXX-01')
+  wallet.create_new_hotkey(use_password=False, overwrite=False)
+  print(wallet.hotkey.ss58_address)
   ```
-- [ ] Note your exact SS58 hotkey address — you'll need it verbatim for the PR title:
-  ```bash
-  btcli wallet overview --wallet.name <wallet> --wallet.hotkey <hotkey>
-  ```
-- [ ] Confirm you have **not** already spent this hotkey on a previous accepted submission (one submission per hotkey registration).
-- [ ] Ensure you have enough TAO to cover registration + on-chain commitment transaction fees.
+  Save SS58 + mnemonic to `/root/.secrets/sn66_vXX_hotkeys.env` immediately.
+- [ ] Note your SS58 hotkey address for the PR title (needed before pushing).
+- [ ] Confirm you have enough TAO to cover registration (∼τ0.19) + commitment fees — but do NOT register yet.
+- [ ] **Registration happens in Phase 6, AFTER CI passes.**
 
 ### 1.2 Repository Setup
 
@@ -297,31 +307,31 @@ Run these grep checks to catch common DQ triggers:
 
 ---
 
-## Phase 6 — On-Chain Commitment
+## Phase 6 — Register Hotkey + On-Chain Commitment
 
-Choose **Option A** (recommended — gives a private window) or **Option B**.
+> ❗ **L-SN66-REGISTER-AFTER-CI-1 — HARD RULE: ALL 3 GitHub CI checks must be green BEFORE registering.**
+> Registration costs ~τ0.19 and is non-refundable. If CI fails after you register, that TAO is lost.
+> **Correct order: CI passes → register hotkey → commit SHA on-chain.**
 
-### Option A — Commit SHA Before Opening PR (Private Window)
+### Step 6.0 — Confirm CI Passed (GATE — mandatory before any TAO spend)
 
-- [ ] Generate the pre-PR commitment string and run local checks:
-  ```bash
-  ./scripts/precommit_ninja_pr.py --hotkey <your-SS58-hotkey> --judge
-  # Prints: github-pr-head:unarbos/ninja@<head-sha>
+- [ ] Verify ALL 3 GitHub CI checks show `completed / success`:
+  - [ ] Agent PR Smoke ✅
+  - [ ] PR Scope Guard ✅
+  - [ ] OpenRouter PR Judge ✅
+- [ ] If ANY check is `failure` or `in_progress` — **STOP**. Do not register. Fix, push new commit, wait for re-run.
+
+### Step 6.1 — Register Hotkey (ONLY after Step 6.0 is fully green)
+
+- [ ] Register on-chain (~τ0.19, non-refundable):
+  ```python
+  sub.burned_register(wallet=wallet, netuid=66)
   ```
-- [ ] Submit that exact printed commitment on-chain before creating the PR:
-  ```bash
-  ./scripts/precommit_ninja_pr.py \
-    --hotkey <your-SS58-hotkey> \
-    --judge \
-    --commit-on-chain \
-    --wallet-name <wallet-name> \
-    --wallet-hotkey <wallet-hotkey-name>
-  ```
-- [ ] If Finney RPC has SSL timeouts, use an alternative public subtensor endpoint (check the community Discord for current options).
-- [ ] Confirm the transaction succeeded and note the block number.
-- [ ] **Now** open the PR on GitHub (instructions in Phase 7).
+- [ ] Confirm success. Note block number.
 
-### Option B — PR First, Then Commit
+### Step 6.2 — Commit SHA On-Chain
+
+### Option B — PR First, Then Commit (T68Bot standard)
 
 - [ ] Open the PR on GitHub first (Phase 7).
 - [ ] Note the PR number (e.g., `#123`).
@@ -425,6 +435,7 @@ Choose **Option A** (recommended — gives a private window) or **Option B**.
 | GitHub web editor after SHA committed | SHA mismatch → DQ | Never use web editor post-commit |
 | `git rebase` after SHA committed | SHA mismatch → DQ | Freeze branch after SHA committed |
 | `--amend` after SHA committed | SHA mismatch → DQ | Never amend committed branches |
+| Registering hotkey before CI passes | Wasted ~τ0.19 (non-refundable) | **L-SN66-REGISTER-AFTER-CI-1**: Push PR → wait for ALL 3 CI ✅ → THEN register |
 | Files besides `agent.py` in PR | Scope Guard → rejected | `git diff --cached --name-only` |
 | `temperature=` / `top_p=` in code | Scope Guard → rejected | Grep before committing |
 | Hardcoded API key in code | Scope Guard → rejected | Grep for `sk-` / `Bearer` |
