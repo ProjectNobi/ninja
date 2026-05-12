@@ -420,17 +420,30 @@ Run these grep checks to catch common DQ triggers:
 
 ### 8.2 If CI Fails
 
-> ⚠️ **If you need to fix a CI failure AFTER committing SHA on-chain, you must:**
-> 1. Register a NEW hotkey (the old one is spent on the failed attempt)
-> 2. Fix your agent
-> 3. Start the entire process over from Phase 1
+> ⚠️ **CI failure ≠ PR dead. L-SN66-CI-NOT-VALIDATOR-GATE-1:**
+> The SN66 validator reads code from the on-chain SHA directly. It does NOT check GitHub CI status.
+> A CI-failing PR is still in the duel queue and competing. Both PR #1251 (CI FAIL) and PR #1252 (CI PASS) competed simultaneously on 2026-05-12.
 >
-> **You cannot amend, rebase, or re-push to fix a SHA-committed branch.**
+> **The correct response to CI failure (before registration):**
+> 1. Diagnose the CI failure (run `python3 -m pyflakes agent.py` locally)
+> 2. Push a fix commit to the SAME branch (L-SN66-CI-FAIL-FIX-IN-PLACE-1)
+> 3. Wait for CI to go green on the same PR
+> 4. THEN register hotkey + commit SHA
+> 5. **Never open a new PR just to fix CI** — that wastes ~τ0.19 on a new registration
+>
+> **The correct response to CI failure (after registration + on-chain commit):**
+> The code is already competing. CI status doesn't affect the validator.
+> Push a fix commit to update CI hygiene if desired, but no new hotkey is needed.
 
-- [ ] If CI fails BEFORE you commit on-chain (Option A): you can push fixes freely — just re-capture the new SHA.
-- [ ] If CI fails AFTER on-chain commitment: assess whether it's a validator error (rare) or your code's fault.
-- [ ] Read CI failure logs carefully — understand the exact rule that was violated.
+- [ ] If CI fails: read the failure logs carefully. Is it a trivial fix (unused variable, ASCII char)? Fix in-place.
+- [ ] If CI fails AFTER on-chain commitment: your PR is already competing. Assess whether to push a fix for CI hygiene.
 - [ ] Document what went wrong to avoid repeating it.
+
+> **Timing safety check (L-SN66-TURN-BUDGET-1 + L-SN66-GATE-TEST-TIMING-BLIND-1):**
+> Gate tests cannot detect timing failures. Before submitting any build that raises MAX_TOTAL_REFINEMENT_TURNS above king's value:
+> - Calculate: `turns × max_api_calls_per_turn × (max_tokens / 20 tok/s) < 248s`
+> - Run: `time python3 agent.py --task <hardest_local_task>` → must complete < 200s
+> - King uses MAX_TOTAL_REFINEMENT_TURNS=2, never times out. Never exceed this value.
 
 ### 8.3 Duel Monitoring
 
