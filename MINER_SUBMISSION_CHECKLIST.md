@@ -309,9 +309,10 @@ Run these grep checks to catch common DQ triggers:
 
 ## Phase 6 — Register Hotkey + On-Chain Commitment
 
-> ❗ **L-SN66-REGISTER-AFTER-CI-1 — HARD RULE: ALL 3 GitHub CI checks must be green BEFORE registering.**
-> Registration costs ~τ0.19 and is non-refundable. If CI fails after you register, that TAO is lost.
-> **Correct order: CI passes → register hotkey → commit SHA on-chain.**
+> ⚠️ **L-SN66-REGISTER-AFTER-CI-1 — IMPORTANT:** Wait for GitHub CI before registering.
+> **Note:** The validator reads code directly from the on-chain SHA — it does NOT check GitHub CI status. A PR with CI failure will still enter the duel queue and compete.
+> However: waiting for CI before registering catches code issues early (pyflakes warnings, scope violations) BEFORE burning τ on a hotkey you might want to replace.
+> **Best practice order: verify CI ✅ → register hotkey → commit on-chain.**
 
 ### Step 6.0 — Confirm CI Passed (GATE — mandatory before any TAO spend)
 
@@ -435,7 +436,7 @@ Run these grep checks to catch common DQ triggers:
 | GitHub web editor after SHA committed | SHA mismatch → DQ | Never use web editor post-commit |
 | `git rebase` after SHA committed | SHA mismatch → DQ | Freeze branch after SHA committed |
 | `--amend` after SHA committed | SHA mismatch → DQ | Never amend committed branches |
-| Registering hotkey before CI passes | Wasted ~τ0.19 (non-refundable) | **L-SN66-REGISTER-AFTER-CI-1**: Push PR → wait for ALL 3 CI ✅ → THEN register |
+| Registering hotkey before CI passes | Agent PR Smoke failure = PR still competes BUT code quality is unverified | **L-SN66-REGISTER-AFTER-CI-1**: Push PR → wait for CI → THEN register. Note: validator ignores CI status — CI is a quality gate only, not a hard block. |
 | Files besides `agent.py` in PR | Scope Guard → rejected | `git diff --cached --name-only` |
 | `temperature=` / `top_p=` in code | Scope Guard → rejected | Grep before committing |
 | Hardcoded API key in code | Scope Guard → rejected | Grep for `sk-` / `Bearer` |
