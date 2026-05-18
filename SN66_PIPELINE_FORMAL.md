@@ -128,7 +128,7 @@ python3 validator_harness_v6.py --list-tasks 100 --seed 42
 ---
 
 #### STEP 2b — M2.7 Gold Pattern Analysis (Opus 4.7, ~15min)
-**Task:** Analyze 100 M2.7 gold patches from `gold_patches/gold_patches_minimax_minimax-m2_7.jsonl`.
+**Task:** Analyze 1000 M2.7 gold patches from `gold_patches/gold_patches_minimax_minimax-m2_7.jsonl`.
 
 **Extract:**
 - Average patch size (lines changed) by task type
@@ -378,3 +378,23 @@ Final Unified Collector (PM2: `sn66-final-unified-collector`, Hetzner1) feeds th
 ---
 
 *Last updated: 2026-05-18 | By: T68Bot*
+
+---
+
+## SUBMISSION LOG — 2026-05-18
+
+### ProjectNobi-v62 (James approved)
+| Field | v62ci | v62b (fixed original) |
+|-------|-------|----------------------|
+| Hotkey | sn66-pnobi-v62 | sn66-pnobi-v62b |
+| UID | 200 | 136 |
+| CI Score | 78 | 74 |
+| Strategy | King-base + UPDATE WIRING | Original v62 + 4 minimum fixes |
+| Submission ID | 5CciPvx7G9VnCQ6j-e1a9728ff6f98ae0 | 5G6JxJQviH6w8i2F-270cb163a1a11b80 |
+| Status | LIVE | LIVE |
+
+### Key CI Lesson (L-SN66-CI-SUBMISSION-1)
+James directive: always try minimum changes to original version first.
+Never change base strategy. Only fix what the CI judge specifically flags.
+See MINER_SUBMISSION_CHECKLIST.md Pre-Submission Fix Checklist for exact fixes.
+

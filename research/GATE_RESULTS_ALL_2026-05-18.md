@@ -1026,3 +1026,21 @@
     UPDATE        3/11   27.3%  █████ ⚠️
 ```
 
+
+## ProjectNobi-v62 SUBMISSION — 2026-05-18 20:40 UTC
+
+| Field | Value |
+|-------|-------|
+| Hotkey name | sn66-pnobi-v62 |
+| UID | 200 |
+| SS58 | 5CciPvx7G9VnCQ6j44wiPKXf3ZvwZcX3BHkbvxV9BcRo3fkD |
+| Submission ID | 5CciPvx7G9VnCQ6j-e1a9728ff6f98ae0 |
+| CI Score | 78/100 (threshold 70) — PASSED |
+| CI Verdict | pass |
+| Agent | agent_cl_gpt_v62ci.py (king base + UPDATE TASK WIRING rule) |
+| James approved | ✅ 2026-05-18 |
+| Strategy | King-base + single minimal SYSTEM_PROMPT addition |
+| Lesson | Large refactors fail CI (score 62). Minimal king-delta passes (score 78). |
+
+### Local gate (v62 full build, 50 tasks, 50 steps vs new king d24c9d3):
+Running — check /tmp/v62_gate_50steps.log for final WR
