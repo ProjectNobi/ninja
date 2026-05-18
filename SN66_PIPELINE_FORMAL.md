@@ -430,3 +430,31 @@ Confirmed: syntax OK, 50 steps, all king guards intact.
 - Agent: /root/sn66-ninja/agent_cl_gpt_v63.py (4608L)
 - King ref: /root/sn66-ninja/king_agent.py (4596L, d24c9d3)
 - Harness: /root/sn66-ninja/validator_harness_v6.py
+
+---
+
+## 🏆 OFFICIAL BASELINE — v62 (James directive 2026-05-18)
+
+**v62 is the current T68 SN66 baseline for all miners.**
+
+| File | Description | CI Score | Gate WR |
+|------|-------------|----------|---------|
+| `agent_v62_submit.py` | Original v62 (raw) | 62 CI (fails) | ~56-68% vs king UID 64 |
+| `agent_cl_gpt_v62_fix.py` | v62 + 4 min CI fixes | **74 CI ✅** | same |
+| `baseline_sn66_v62.py` | Copy of original v62 | — | — |
+| `baseline_sn66_v62_ci.py` | Copy of CI-passing v62 | **74 CI ✅** | — |
+
+### v62 Key Strengths (preserve in all future versions)
+- MAX_STEPS=50, MAX_COMMANDS_PER_RESPONSE=25 (matches king)
+- COMPLETENESS BEATS MINIMALISM + under-editing asymmetry
+- UPDATE TASK WIRING RULE (functional connectivity)
+- Language-specific completeness rules
+- CASCADE tracking (callers, importers, tests)
+
+### v62 Submission Status (LIVE)
+- sn66-pnobi-v62 (UID 200): king-base + UPDATE WIRING, CI 78 ✅
+- sn66-pnobi-v62b (UID 136): v62 + 4 min fixes, CI 74 ✅
+
+### Starting point for all future versions
+All future agent versions build from v62 (CI-passing) as base.
+Restore all king guard rails before submitting (see Pre-Submission Fix Checklist in MINER_SUBMISSION_CHECKLIST.md).
