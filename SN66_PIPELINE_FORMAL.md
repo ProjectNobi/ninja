@@ -458,3 +458,30 @@ Confirmed: syntax OK, 50 steps, all king guards intact.
 ### Starting point for all future versions
 All future agent versions build from v62 (CI-passing) as base.
 Restore all king guard rails before submitting (see Pre-Submission Fix Checklist in MINER_SUBMISSION_CHECKLIST.md).
+
+---
+
+## SESSION LESSONS — 2026-05-18
+
+### Pipeline Execution Rules (hardened from today)
+
+**L-SN66-NO-PIPELINE-SHORTCUT-1** — Never shortcut any pipeline step. If build fails → retry the step, never substitute with a copy.
+
+**L-SN66-CI-VBASE-MATTERS-1** — King-base → 74-78 CI on first attempt. v54-base → stuck at 62 after 9 attempts. Default to king-base for all CI submissions.
+
+**L-SN66-CI-INCREMENTAL-FIXES-FAIL-1** — Stop after 3 failed CI attempts on same base. Switch to king-base approach.
+
+**L-SN66-CI-ACCEPTED-CHECK-1** — Always verify acceptance via API after submission. Console parsing can miss accepted submissions.
+
+**L-SN66-CI-HOTKEY-SPENT-1** — Each hotkey is consumed after first submission attempt (pass OR fail). Budget τ1.5+ before starting CI campaign.
+
+**L-SN66-GATE-REGRESSION-1** — Gate WR peaks early, regresses as harder tasks come in. Report WR only after ≥40/50 tasks complete.
+
+**L-SN66-AGENT-USERNAME-1** — Use `--agent-username ProjectNobi-vXX` flag for on-chain naming showing on dashboard.
+
+### CI Submission Strategy (proven reliable)
+1. Build from king_agent.py as base
+2. Add ONE targeted improvement (e.g. UPDATE TASK WIRING rule)
+3. Apply pre-submission fix checklist (4 items in MINER_SUBMISSION_CHECKLIST.md)
+4. Submit with `--agent-username ProjectNobi-vXX`
+5. Verify acceptance via API (not console)
