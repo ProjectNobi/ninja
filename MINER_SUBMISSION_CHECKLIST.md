@@ -272,3 +272,17 @@ Large structural departures → low score. Targeted improvements → high score.
 **Cost today:** 4 hotkey registrations for v64 = ~τ0.92 burned + ~τ0.87 starting = τ1.79 total spent.
 **Rule:** Before any CI submission campaign, ensure τ1.5+ available. Each attempt = τ0.22-0.29.
 **Lesson:** Set a cap — max 3 hotkey registrations per version. If still failing → switch strategy.
+
+### L-SN66-AGENT-USERNAME-MANDATORY-1 — Always set --agent-username on EVERY submission (James directive 2026-05-18)
+**Problem:** UIDs 200 + 136 (v62 submissions) were submitted without --agent-username. Name shows as blank/hotkey on dashboard. Only v64 (UID 30) correctly shows "ProjectNobi-v64".
+**Rule:** MANDATORY on ALL future submissions — without exception:
+```bash
+python3 scripts/submit_private_submission.py \
+  --wallet-name T68Coldkey \
+  --wallet-hotkey <hotkey-name> \
+  --hotkey <SS58> \
+  --agent /path/to/agent.py \
+  --agent-username ProjectNobi-vXX   ← ALWAYS INCLUDE THIS
+```
+**Naming convention:** `ProjectNobi-v{version}` — matches our brand identity on the dashboard.
+**Note:** Cannot be changed after submission — hotkey is spent. Name is permanent.
