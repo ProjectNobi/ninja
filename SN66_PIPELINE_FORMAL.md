@@ -1,0 +1,380 @@
+# SN66 MINING PIPELINE — FORMAL INSTRUCTIONS
+*James directive 2026-05-18 | T68Bot standing operating procedure*
+
+---
+
+## TWO-STAGE ARCHITECTURE
+
+| Stage | Engine | Data Used | Goal |
+|-------|--------|-----------|------|
+| **Stage 1 (NOW)** | Opus 4.7 builds agents informed by data | DPO pairs + gold patches + duel history | Win ≥60% WR, beat king, earn emissions |
+| **Stage 2 (SOON)** | Dedicated fine-tuned M2.7 as offline dev tool | All Stage 1 data + new duel DPO + Stage 1 results | Near-unlimited iterations at $0, dominate long-term |
+
+---
+
+## PRE-FLIGHT DATA CHECK (Both Stages)
+Before any pipeline run: verify `training_unified_gold.jsonl` and DPO files are readable and record counts are non-zero.
+```bash
+wc -l /root/sn66-ninja/training_data/training_unified_gold.jsonl
+wc -l /root/sn66-ninja/training_data/*dpo*.jsonl | tail -1
+```
+If any file is empty or missing → STOP and investigate before proceeding.
+
+---
+
+## STAGE 1 — DATA-INFORMED PROMPT PIPELINE (CURRENT)
+
+### Data Assets Available
+| Dataset | Location | Records | Use |
+|---------|----------|---------|-----|
+| Unified gold patches | Hetzner1: training_data/training_unified_gold.jsonl | 297,215 | Understand how models solve tasks |
+| Unified gold (AnonServer) | AnonServer: training_data/training_unified_gold.jsonl | 327,180 | Larger set, more models |
+| DPO pairs (full matrix) | training_data/full_matrix_dpo_pairs.jsonl | 30,632 | Judge preferences across all task types |
+| DPO pairs (UPDATE tasks) | training_data/update_task_dpo_pairs.jsonl | 32,263 | What judge rewards for UPDATE (68% of all tasks) |
+| DPO pairs (reference) | training_data/reference_dpo_pairs.jsonl | 7,530 | Reference patch vs model — ground truth |
+| DPO pairs (self-play) | training_data/self_play_dpo_pairs.jsonl | 2,848 | M2.7 vs itself, judge rationale |
+| Live duel DPO (today) | training_data/dpo/2026-05-18.jsonl | 776 | Real competition duels |
+| King history | training_data/king_history/ | 21 kings | All past kings' patterns |
+| SFT records | training_data/sft/ | 873 | Live duel SFT training pairs |
+| Harness v6 | validator_harness_v6.py | 1,842L | Local gate testing |
+| R2 task dataset | hf_dataset_cache.jsonl | 9,122 tasks | Gate test pool (identical to live validator) |
+
+### STEP-BY-STEP PIPELINE (James directive 2026-05-18)
+
+---
+
+#### PRE-STEP: King Sync (MANDATORY before every pipeline run)
+```bash
+cd /root/sn66-ninja && git fetch --all
+git show <latest-commit>:agent.py > king_agent.py
+wc -l king_agent.py   # Verify line count changed
+```
+Check: `curl -s https://ninja66.ai/dashboard.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['current_king']['commit_sha'][:16])"`
+
+---
+
+#### STEP 1a — PR/Source Check (Opus 4.7, ~10min)
+**Task:** Check unarbos/ninja for any new merges since last pipeline run. Extract changes to validate.py, harness, scoring formula.
+**Input:** `git log origin/main --oneline -20` + `git diff HEAD..origin/main -- validate.py`
+**Output:** `research/PR_CHANGES_SN66_vNEXT.md`
+**Question to answer:** Did scoring formula, judge model, or task distribution change?
+
+---
+
+#### STEP 1b — King Code Analysis (Opus 4.7, ~15min)
+**Task:** Deep-study king_agent.py. Extract:
+- SYSTEM_PROMPT full text + length
+- MAX_STEPS, MAX_COMMANDS_PER_RESPONSE
+- Multi-shot refinement logic (any candidate generation + selection)
+- Dynamic per-turn injections
+- Language-specific rules
+- What the king does for UPDATE vs BUGFIX vs FEATURE vs REFACTOR tasks
+**Input:** `/root/sn66-ninja/king_agent.py` only
+**Output:** `research/KING_ANALYSIS_SN66_vNEXT.md`
+
+---
+
+#### STEP 1c — Scoring Mechanism Validation (Opus 4.7, ~10min)
+**Task:** Verify current scoring formula from live harness. Confirm judge model = gpt-5.4, win_margin=3, scoring = 0.5×cursor_sim + 0.5×llm_judge.
+**Input:** `/root/sn66-ninja/validator_harness_v6.py` (search for JUDGE_MODEL, _DIFF_JUDGE_WEIGHT, win_margin)
+**Output:** `research/SCORING_FORMULA_SN66_vNEXT.md`
+**Critical:** Any change here invalidates all previous gate results.
+
+---
+
+#### STEP 1d — Live Duel API Pull (automated, ~5min)
+**Task:** Fetch all duel data for our active hotkeys from dashboard.json and compute our actual WR in live competition.
+```bash
+python3 -c "
+import json
+with open('/tmp/dashboard_sn66.json') as f: d = json.load(f)
+# Find our duels by hotkey prefix
+our_hotkeys = ['5FecE3QZ', '5Dqabiz8']
+for duel in d['duels']:
+    if any(duel.get('challenger_hotkey','').startswith(h) for h in our_hotkeys):
+        print(duel)
+"
+```
+**Output:** `research/LIVE_DUEL_STATE_SN66_vNEXT.md`
+
+---
+
+#### STEP 1e — Harness + Task Selection (local, ~10min)
+**Task:** Ensure harness v6 is up to date. Select 50 diverse tasks for gate test covering UPDATE/FEATURE/BUGFIX/REFACTOR in proportion matching live distribution (68/19/7/6%).
+```bash
+python3 validator_harness_v6.py --list-tasks 100 --seed 42
+```
+**Output:** Gate test task list saved to `research/GATE_TASKS_SN66_vNEXT.txt`
+
+---
+
+#### STEP 2a — DPO Pair Deep Dive (Opus 4.7, ~20min)
+**Task:** Analyze 500 DPO pairs, specifically:
+- 300 UPDATE pairs from `update_task_dpo_pairs.jsonl`
+- 100 FEATURE pairs from `full_matrix_dpo_pairs.jsonl`  
+- 100 BUGFIX pairs from `full_matrix_dpo_pairs.jsonl`
+
+**For each type, extract:** What does gpt-5.4 reward vs penalize? Give 5 concrete examples per task type.
+
+**Key questions to answer:**
+- For UPDATE: does judge care more about completeness or surgical precision?
+- For FEATURE: does judge reward end-to-end wiring or targeted implementation?
+- For BUGFIX: does judge care about addressing root cause or fixing symptoms?
+- What specific phrases/patterns appear in chosen (winning) rationale but not rejected?
+
+**Input:** First 300 lines of `training_data/update_task_dpo_pairs.jsonl` + first 200 lines of `training_data/full_matrix_dpo_pairs.jsonl`
+**Output:** `research/DPO_INTEL_SN66_vNEXT.md`
+
+---
+
+#### STEP 2b — M2.7 Gold Pattern Analysis (Opus 4.7, ~15min)
+**Task:** Analyze 100 M2.7 gold patches from `gold_patches/gold_patches_minimax_minimax-m2_7.jsonl`.
+
+**Extract:**
+- Average patch size (lines changed) by task type
+- Files changed per task
+- Does M2.7 tend to under-edit or over-edit?
+- What patterns does M2.7 use successfully? What does it miss?
+- How does M2.7's output compare to the reference patch?
+
+**Why:** In live competition, M2.7 generates our patches. Our agent's SYSTEM_PROMPT must compensate for M2.7's blind spots.
+
+**Input:** First 100 records from `training_data/gold_patches/gold_patches_minimax_minimax-m2_7.jsonl`
+**Output:** `research/M27_PATTERNS_SN66_vNEXT.md`
+
+---
+
+#### STEP 3 — Full Analysis + Debate (Opus 4.7 → Opus 4.7, ~30min)
+**Task A (Opus):** Synthesize all research outputs into a single decision doc:
+- King strengths/weaknesses → what our agent must match or beat
+- M2.7 patterns → what SYSTEM_PROMPT must explicitly override
+- gpt-5.4 rewards → what behaviors to emphasize per task type
+- Top 5 changes for next version, with expected WR impact
+
+**Input:** All `research/*_SN66_vNEXT.md` files
+**Output:** `research/ROOT_CAUSE_SN66_vNEXT.md`
+
+**Task B (second Opus — debate):** Challenge every finding in ROOT_CAUSE with data:
+- Is this supported by the DPO data?
+- Does this contradict any known forbidden patterns?
+- What's the WR risk of each proposed change?
+**Output:** `research/DEBATE_ROOT_CAUSE_SN66_vNEXT.md`
+
+---
+
+#### STEP 4 — Build Next Version (Opus 4.7, ~30min)
+**Task:** Read ROOT_CAUSE + DEBATE + king_agent.py + agent_cl_gpt_v54.py → build next version.
+
+**Mandatory rules for the build:**
+- Start from v54 as base (best at 52.1%)
+- Match king's budget: MAX_STEPS=50, MAX_COMMANDS_PER_RESPONSE=25
+- Add multi-shot refinement if it doesn't regress UPDATE performance
+- Apply language-specific completeness rules from king
+- Implement UPDATE-specific functional connectivity requirement
+- Keep: COMPLETENESS BEATS MINIMALISM + asymmetry (under-edit costs more)
+- NEVER add: "never delete or remove existing functions/components" pattern
+- NEVER remove the COMPLETENESS asymmetry statement
+
+**Input:** `research/ROOT_CAUSE_SN66_vNEXT.md` + `research/DEBATE_ROOT_CAUSE_SN66_vNEXT.md` + king_agent.py + agent_cl_gpt_v54.py
+**Output:** `agent_cl_gpt_vNEXT.py` (named with actual version number)
+
+**Audit (second Opus):** Audit the new version for:
+- Forbidden patterns (check PIPELINE_CONTEXT_vNEXT.md forbidden list)
+- Budget settings (verify MAX_STEPS=50, MAX_COMMANDS=25)
+- COMPLETENESS asymmetry present
+- No "never delete" pattern
+
+**Output:** `research/AUDIT_SN66_vNEXT.md`
+
+**Debate (second Opus):** Challenge every audit finding with data.
+**Output:** `research/DEBATE_AUDIT_SN66_vNEXT.md`
+
+---
+
+#### STEP 5 — Submission Checklist Alignment
+Before gate test, verify all items:
+```
+[ ] MAX_STEPS=50 (matches king)
+[ ] MAX_COMMANDS_PER_RESPONSE=25 (matches king)
+[ ] COMPLETENESS BEATS MINIMALISM present
+[ ] Under-editing asymmetry present  
+[ ] Language-specific completeness rules present
+[ ] "Never delete" pattern NOT present
+[ ] UPDATE functional connectivity rule present
+[ ] No hardcoded API keys, endpoints, or wallet references
+[ ] solve() function signature unchanged
+[ ] File is syntactically valid Python
+```
+```bash
+python3 -c "import agent_cl_gpt_vNEXT; print('syntax OK')"
+```
+
+---
+
+#### STEP 6 — Gate Test (tmux, report to James)
+```bash
+# ALWAYS in tmux
+tmux new-session -d -s sn66_vnext_gate50
+tmux send-keys -t sn66_vnext_gate50 "cd /root/sn66-ninja && python3 validator_harness_v6.py --challenger agent_cl_gpt_vNEXT.py --king king_agent.py --tasks 50 --seed 42 --parallel 3 --timeout 300 > /tmp/vnext_gate_50.log 2>&1" Enter
+
+# Monitor
+tmux attach -t sn66_vnext_gate50
+# Or: tail -f /tmp/vnext_gate_50.log
+```
+
+**Threshold: ≥60% decisive WR on 50 tasks**
+
+**If PASS (≥60%):**
+→ Report full results to James → ask for explicit submission approval → submit
+
+**If FAIL (<60%):**
+→ Send James the gate results with breakdown by task type
+→ Ask James to restart pipeline from Step 3 (Analysis) with new insights
+→ Document failure analysis in `research/GATE_FAIL_SN66_vNEXT.md`
+
+---
+
+## STAGE 2 — DEDICATED FINE-TUNED M2.7 PIPELINE
+
+### Trigger Conditions
+- T68-S2 DGX Spark arrives and NVLink bridge set up (242GB unified RAM)
+- All gold + DPO data collection complete (target: 9,122 tasks × all models)
+- Stage 1 has produced ≥3 submitted versions with live duel results
+
+**Fallback:** If fine-tuning fails or M2.7 judge simulation unreliable → return to Stage 1 pipeline immediately and notify James.
+
+---
+
+### The Three Roles of the Dedicated Fine-Tuned M2.7
+
+| Role | What it does | Replaces |
+|------|-------------|---------|
+| **🛠️ Role 1 — Patch Generator** | Generates winning patches natively for any SN66 task. Trained on 297K+ gold examples from 20+ models. Knows exactly what gpt-5.4 rewards. | External API calls (OR/Chutes, ~$0.30/task) |
+| **⚖️ Role 2 — Judge Simulator** | Predicts gpt-5.4's decision for any patch pair (ours vs king). Trained on 86K+ DPO pairs with full judge rationale. Returns predicted winner + confidence. | Running real gpt-5.4 judge (~$0.10/duel) |
+| **🔬 Role 3 — Offline Dev Tool** | Powers rapid iteration: Opus 4.7 writes improved SYSTEM_PROMPT → M2.7 generates patches → M2.7 simulates judge → score instantly. Full build-test cycle at near-$0. | 50-task gate test (~$15-30/run) |
+
+**Net result:** 50-100 build-test cycles per day vs 1-2 today. Self-improving flywheel.
+
+---
+
+### Training Data (collected by Final Unified Collector, running 24/7)
+
+| Dataset | Location | Records | Trains Role |
+|---------|----------|---------|-------------|
+| Unified gold patches | training_unified_gold.jsonl | 297K+ | Role 1 — SFT phase |
+| DPO full matrix | full_matrix_dpo_pairs.jsonl | 30K+ | Roles 1+2 — DPO phase |
+| UPDATE task DPO | update_task_dpo_pairs.jsonl | 32K+ | Role 1 — UPDATE specialization |
+| Reference DPO | reference_dpo_pairs.jsonl | 7.5K | Role 2 — ground truth alignment |
+| Self-play DPO | self_play_dpo_pairs.jsonl | 2.8K | Role 2 — preference refinement |
+| Live duel SFT | sft/ (daily, growing) | 800+ | Roles 1+2 — real competition signal |
+| King history | training_data/king_history/ | 21 kings | Role 1 — "what wins" patterns |
+
+### Fine-Tune Config
+- **Base:** MiniMax-M2.7-base (NVFP4, ~115GB — already on T68-S1 at /home/t68/models/minimax-m2.7-base/)
+- **Method:** QLoRA (LoRA rank 64, alpha 128, targets: q/k/v/o projections)
+- **Hardware:** T68-S1 + T68-S2 NVLinked = 242GB unified RAM, SGLang TP=2
+- **Phase 1 — SFT:** (issue + repo_context) → winning_patch using 297K gold records
+- **Phase 2 — DPO:** (issue, chosen_patch, rejected_patch, judge_rationale) → preference alignment
+- **Deployment:** LiteLLM proxy port 4000, model alias `t68-sn66-m27`
+
+---
+
+### Stage 2 Pipeline Steps
+
+#### PRE-STEP: King Sync (same as Stage 1 — mandatory)
+
+---
+
+#### STEP 1 — Task Sampling (automated, 5min)
+**M2.7 role:** None.
+Select 50 diverse tasks from R2 dataset matching live distribution (68% UPDATE, 19% FEATURE, 7% API, 6% BUGFIX).
+
+---
+
+#### STEP 2 — Patch Generation (M2.7 Role 1, ~30min, $0)
+Run fine-tuned M2.7 offline (SGLang on T68-S1+S2) against all 50 tasks.
+Generate **3 candidate patches per task** at temperatures 0.7 / 1.0 / 1.3.
+```bash
+python3 run_m27_candidates.py --tasks gate_tasks.txt --candidates 3 --model t68-sn66-m27
+```
+Output: 150 candidate patches
+
+---
+
+#### STEP 3 — Judge Simulation + Best Pick (M2.7 Role 2, ~10min, $0)
+Fine-tuned M2.7 scores each candidate vs king — simulates gpt-5.4 decision.
+Selects highest-scoring candidate per task. Returns predicted WR estimate.
+```bash
+python3 simulate_judge.py --candidates candidates.jsonl --king king_agent.py --judge t68-sn66-m27-judge
+```
+Output: best_patches.jsonl + predicted_wr.txt
+
+---
+
+#### STEP 4 — Rapid Iteration (M2.7 Roles 1+2 + Opus 4.7, multiple cycles)
+If predicted WR < 60%: Opus 4.7 reads failure analysis → improves SYSTEM_PROMPT → back to Step 2.
+Each cycle: ~40min, near $0. Run until predicted WR ≥ 60%.
+**Max 10 cycles per run. If threshold unmet after 10 cycles → escalate to James.**
+**This is where Stage 2 dominates Stage 1:** 5-10 improvement cycles in one afternoon.
+
+---
+
+#### STEP 5 — Opus Audit + Debate (when predicted WR ≥ 60%)
+Same as Stage 1 — two Opus sessions audit then debate the final version.
+Output: `research/AUDIT_STAGE2_vNEXT.md` + `research/DEBATE_STAGE2_vNEXT.md`
+
+---
+
+#### STEP 6 — Real Gate Test (50 tasks, tmux, final confirmation)
+Run actual harness v6 with fine-tuned M2.7 as execution model vs current king.
+Threshold: ≥60% decisive WR. Always in tmux.
+```bash
+tmux new-session -d -s sn66_stage2_gate
+python3 validator_harness_v6.py --challenger agent_vNEXT.py --king king_agent.py \
+  --tasks 50 --seed 42 --model t68-sn66-m27 --parallel 5 --timeout 300
+```
+
+---
+
+#### STEP 7 — Report to James + Submit (approval required, same rule as Stage 1)
+
+---
+
+### Data Flywheel (why Stage 2 wins long-term)
+
+```
+Live duel → gpt-5.4 judges → new DPO pair → nightly fine-tune update →
+better M2.7 → better patch → win duel → repeat
+```
+
+Every win generates training data that makes the next version stronger.
+Competitor agents without this loop fall behind exponentially.
+
+Final Unified Collector (PM2: `sn66-final-unified-collector`, Hetzner1) feeds this flywheel 24/7.
+
+---
+
+## STANDING RULES (ALL PIPELINE RUNS)
+
+### Forbidden (never add to SYSTEM_PROMPT)
+❌ "Never delete or remove existing functions/components unless explicitly requested"
+❌ "Preserve existing code structure" without completeness asymmetry
+❌ Minimalism framing WITHOUT the asymmetry counterbalance
+
+### Required (always verify before gate test)
+✅ COMPLETENESS BEATS MINIMALISM (explicit header)
+✅ "Under-editing costs MORE than over-editing" (explicit)
+✅ MAX_STEPS=50, MAX_COMMANDS_PER_RESPONSE=25 (match king)
+✅ Language-specific completeness rules
+✅ King sync BEFORE every pipeline task
+
+### Submission Rules
+- Gate threshold: ≥60% decisive WR (50 tasks, seed 42)
+- Gate ALWAYS in tmux session
+- NEVER submit without James's explicit approval
+- Always register new hotkey before submit (τ0.41-1.64 burn)
+- Private repo: ProjectNobi/sn66-miners only
+
+---
+
+*Last updated: 2026-05-18 | By: T68Bot*
