@@ -398,3 +398,35 @@ James directive: always try minimum changes to original version first.
 Never change base strategy. Only fix what the CI judge specifically flags.
 See MINER_SUBMISSION_CHECKLIST.md Pre-Submission Fix Checklist for exact fixes.
 
+
+---
+
+## v63 — Built 2026-05-18 (James approved for pipeline)
+
+### Description
+**agent_cl_gpt_v63.py** (4608 lines) — King-base + UPDATE TASK WIRING + all new king features
+
+Built from: king_agent.py (UID 64, d24c9d3, 4596L) — current king at time of build
+
+### What v63 Has vs v62ci
+| Feature | v62ci | v63 |
+|---------|-------|-----|
+| Base | king (d24c9d3) | king (d24c9d3) |
+| UPDATE TASK WIRING rule | ✅ | ✅ |
+| Ship blocker detection | ✅ (king's) | ✅ (king's) |
+| Multi-shot with duel scoring | ✅ (king's) | ✅ (king's) |
+| Smart test commands | ✅ (king's) | ✅ (king's) |
+| Companion test timeout scaling | ✅ (king's) | ✅ (king's) |
+
+v63 = v62ci (both are king-base + UPDATE WIRING). Functionally identical.
+Confirmed: syntax OK, 50 steps, all king guards intact.
+
+### Gate Test
+- Running: 50 tasks, seed 42, 50 steps, vs king UID 64 (d24c9d3)
+- Log: /tmp/v63_gate_50steps.log
+- Threshold: ≥60% decisive WR → report to James → submit
+
+### Files
+- Agent: /root/sn66-ninja/agent_cl_gpt_v63.py (4608L)
+- King ref: /root/sn66-ninja/king_agent.py (4596L, d24c9d3)
+- Harness: /root/sn66-ninja/validator_harness_v6.py
