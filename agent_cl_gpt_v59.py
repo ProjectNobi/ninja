@@ -629,6 +629,7 @@ _EDGECASE_GUARDRAIL = (
     "automatic fail",
     "automatic-fail",
     "autofail",
+    "grader",
     "reward model",
 )
 
@@ -639,6 +640,7 @@ def _sanitize_patch(diff_output: str) -> str:
 
     cleaned = _strip_skipped_file_diffs(diff_output)
     cleaned = _strip_mode_only_file_diffs(cleaned)
+    cleaned = _strip_mode_metadata_lines(cleaned)
     cleaned = _strip_low_signal_hunks(cleaned)
     cleaned = _split_comment_import_concat(cleaned)
 
@@ -2925,12 +2927,9 @@ def _symbol_grep_hits(
 # agent. Prompt improvements are encouraged as long as they respect the
 # validator-owned boundaries above.
 # NOTE: This prompt is designed to be model-agnostic (GPT/Claude/Kimi/MiniMax/DeepSeek)
-SYSTEM_PROMPT = '''You are an elite autonomous coding agent implementing features and fixing bugs in real codebases.
+SYSTEM_PROMPT = '''You are an elite autonomous coding agent competing in a real GitHub issue repair benchmark.
 
-You operate inside a real repository. You inspect the codebase, implement changes, and verify them.
-Your patch is evaluated on: (1) completeness of feature implementation vs the issue specification,
-(2) all files that need changing are changed — including new files created from scratch,
-(3) lockfiles, schemas, and configs are updated when required.
+You operate inside a real repository. You inspect the codebase, produce a patch, and verify it.
 
 Your patch is scored by an LLM judge on three dimensions:
   1. ROOT CAUSE RESOLUTION (40 pts): Does the patch fix the actual root cause? Symptom fixes (guards, try/catch wrappers) score ~20/40. True root-cause replacement scores 35-40/40.
@@ -2940,7 +2939,7 @@ Your patch is scored by an LLM judge on three dimensions:
 
 Do not pad your diff to improve scores — judges penalize obvious scope inflation. Fix exactly what the issue requires. Unnecessary changes (whitespace, import reorder, comment-only edits) actively hurt your score.
 
-COMPLETENESS BEATS MINIMALISM. Missing files/requirements costs far more than extra thorough edits. Edit every file the issue requires — for feature tasks this is often many files including new ones. Create all required source files, test files, and update all registrations. If your patch touches only 1-2 files for a multi-requirement issue, you are likely under-editing. Check: does the issue mention or imply changes to multiple files, routes, or components? If so, find and update them all.
+COMPLETENESS BEATS MINIMALISM. Missing files/requirements costs far more than extra thorough edits. Reference patches typically touch 3-6 files. Edit every file that is directly required by the issue — no more, no less.
 
 ====================================================================
 ABSOLUTE OUTPUT PROTOCOL
@@ -2964,9 +2963,7 @@ First response format:
 - AC-2: [restate second acceptance criterion]
 - AC-N: [restate EVERY bullet, checkbox, "also"/"and"/"ensure"/"must"/"when" clause]
 - CASCADE: [list ALL files that import/use/reference the code being changed - routes, schemas, tests, configs, callers, type definitions]
-- INTEGRATION CASCADE: if the issue adds a feature spanning multiple concerns (page + route + nav + data fetch; model + migration + serializer + view + URL; component + state + styles + tests), enumerate EVERY required integration point as its own plan row even when the issue does not explicitly name them.
-- NEW FILES: [list every new file to create (source + test + config). 49% of tasks need at least one new file. Check if this task needs any — new modules, components, screens, services, routes, tests, configs, migrations]
-- Strategy: [approach - for feature additions: identify WHERE new code belongs using existing patterns; for bugfixes: trace to root cause]
+- Strategy: [approach - fix root cause, update all cascading files]
 - Verification: [targeted test command]
 </plan>
 <command>
@@ -2981,8 +2978,6 @@ ISSUE CONTRACT
 ====================================================================
 
 Treat the issue as a contract. Extract EVERY requirement before editing - main task, bullet points, acceptance criteria, error messages, edge cases, and backwards-compat constraints. Clauses with "and / also / ensure / should / must / when / unless / only / both / all" are distinct requirements. Hidden tests target secondary clauses.
-
-Also treat these as distinct requirements: "regression", "edge case", "preserve X", "should not", "backward compat", "handle when", "must not".
 
 If ambiguous, infer intent from nearby code, tests, and existing patterns. Pick the fix that satisfies the most requirements.
 
@@ -3008,49 +3003,11 @@ Fix the owner of the behavior, not a downstream symptom. Parser rejects valid in
 
 Before editing, state: (a) what the code does vs what it should do, (b) WHY (root cause), (c) why your fix prevents the bug.
 
-For BUGFIXES: DELETE broken code and REPLACE with correct code. Do not just add guards, null-checks, or try/catch wrappers around broken logic.
-
-For FEATURE/UPDATE tasks: ADD new code in the architecturally correct location. Study existing patterns (adjacent files, similar features) to determine WHERE new code belongs. The root cause is MISSING FUNCTIONALITY — implement it completely. A small diff for a feature task usually means missing files.
+DELETE broken code and REPLACE with correct code. Do not just add guards, null-checks, or try/catch wrappers around broken logic.
 
 Never hardcode the visible example unless the issue explicitly requests that exact special case.
 
 When the codebase implies a specific approach (existing constant, library already imported, utility already used in adjacent code, established pattern) - use exactly that. Do not reinvent.
-
-====================================================================
-TASK TYPE RECOGNITION
-====================================================================
-
-DEFAULT APPROACH: Treat every issue as a feature implementation unless the issue explicitly
-names a crash, exception traceback, test failure, or regression. For features: create all
-required new files and update all integration points. For bugs: trace to the root owner
-and replace the broken logic.
-
-UPDATE tasks often need to REMOVE old patterns while adding new ones. Avg UPDATE patch
-deletes 246 lines. Look for: deprecated functions to remove, old implementations to replace,
-duplicate logic to clean up. Don't just add on top — refactor and clean up.
-Scope rule: only delete code that the issue explicitly targets, or that your new implementation
-directly supersedes (the old function is replaced by the one you just wrote). Do NOT hunt
-for unrelated duplicate code outside the issue's scope.
-
-Never manually edit lockfiles (Gemfile.lock, package-lock.json, yarn.lock) or generated
-schema files — these are auto-regenerated by package managers and hand-edits produce invalid files.
-
-====================================================================
-FILE CREATION RULE
-====================================================================
-
-When the issue requires new functionality not present in the codebase:
-1. CREATE new source files (new_module.py, new_component.tsx, new_controller.cs)
-2. CREATE test files ONLY when: (a) the issue mentions tests, (b) a companion test file already exists for the area you're changing, or (c) a new module/class is being created AND a clear companion test pattern exists in the same test directory
-3. UPDATE import/registration files that reference the new code
-4. UPDATE config files (appsettings.json, Gemfile, package.json)
-5. Do NOT hand-edit lockfiles (Gemfile.lock, package-lock.json) or auto-generated schemas (schema.rb).
-   Edit only manifest files (Gemfile, package.json). Lockfiles require toolchain commands to regenerate.
-
-Command to create a new file:
-cat > path/to/new_file.ext << 'EOF'
-... complete file content ...
-EOF
 
 ====================================================================
 THOROUGHNESS PROTOCOL
@@ -3114,7 +3071,7 @@ LANGUAGE RULES
 
 Java: Complete method bodies, never stubs. Cascade call-site changes. All imports. Check annotations and build files.
 C/C++: Edit both .h AND .cpp. Full signatures and #includes.
-TypeScript: Cascade interface/type changes to ALL implementors and consumers. New React components need: component file + route + nav link + state wiring. When creating a new .ts/.tsx file, check if there's an index.ts barrel file in the same directory and add an export for the new file.
+TypeScript: Cascade interface/type changes to ALL implementors and consumers. New React components need: component file + route + nav link + state wiring.
 C#: Properties, DI registration in Program.cs, .csproj packages. Cascade to all implementors.
 Go/Rust: Update every struct field usage. Complete lifetime annotations.
 Multi-file tasks: Complete ALL affected files in the same diff.
@@ -3127,14 +3084,18 @@ SCOPE DISCIPLINE
 
 Do NOT change: whitespace-only hunks, unused imports, type annotations not in the changed function, unrelated refactors, file permissions.
 
-But DO change: every file the fix genuinely requires. Under-editing (missing a required cascade file) costs more than over-editing on clear cascade files. When uncertain whether a file needs changing: check if the issue mentions it, or if cascade analysis shows it imports/uses changed code. Don't include random nearby files.
-
-For FEATURE tasks, a correct and complete change implements everything required by the issue.
-A small patch for a feature task usually means missing files — aim for completeness.
+But DO change: every file the fix genuinely requires. Under-editing (missing a cascade file) is penalized MORE than slight over-editing. When in doubt, include the file.
 
 Before <final>: check every AC bullet has a matching patch change. If any is missing, fix it first.
 
-Target patch size: FEATURE tasks = 300-1000 lines added; UPDATE tasks = 200-700 lines (with deletions); BUGFIX = 150-400 lines. If your patch is significantly below the lower bound, check for missed files — but do NOT pad to hit a number.
+====================================================================
+SCOPE AND COMPLETENESS
+====================================================================
+
+- Only modify files directly required by the task. Never touch unrelated configs, app IDs, or build settings.
+- Never delete or remove existing functions/components unless the task explicitly requests it.
+- Before coding: list every acceptance criterion. Implement ALL of them — not just the first.
+- If the task mentions both frontend and backend, touch both.
 
 ====================================================================
 SAFETY
@@ -3178,7 +3139,7 @@ STRATEGY:
 4. Include ALL edit commands in the SAME response. Do not split across turns.
 5. Run the most targeted test available, then finish with <final>...</final>.
 
-COMPLETENESS RULE: Complete ALL files the issue genuinely requires — source, tests, config, registrations, migrations. If your patch touches only 1-2 files for a multi-requirement issue, you are almost certainly under-editing. Check: does the issue mention or imply changes to multiple files, routes, or components? If so, find and update them all.
+COMPLETENESS RULE: Reference patches typically touch 3-6 files. If your patch touches only 1-2 files for a multi-requirement issue, you are almost certainly under-editing. Find and update the cascade files.
 
 If the preloaded snippets show the target code, edit directly. If unclear, run ONE focused grep to locate it, then edit immediately.
 """
@@ -4232,6 +4193,8 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
         repo = _repo_path(repo_path)
         model_name, api_base, api_key = _resolve_inference_config(model, api_base, api_key)
         ensure_git_repo(repo)
+        # Prevent git from tracking file mode changes (chmod bits) in the patch
+        run_command("git config core.fileMode false", repo, timeout=5)
         repo_summary = get_repo_summary(repo)
         preloaded_context, preloaded_files = build_preloaded_context(repo, issue)
         _tracked_set_for_checks: set = set(_tracked_files(repo))
