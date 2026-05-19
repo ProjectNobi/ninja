@@ -599,6 +599,22 @@ Every win generates training data that makes the next version stronger.
 
 ---
 
+## 📊 DATA ASSETS — ARCHITECTURE (James directive 2026-05-19)
+
+### 🏛️ Single Source of Truth: HETZNER1
+> **Hetzner1 = primary training data server. ALL fine-tuning runs from Hetzner1 only.**
+> AnonServer = backup + active data generation only. Never train from AnonServer directly.
+
+**Sync architecture (automatic, every 2 hours):**
+- `sync_gold_from_anonserver.sh` — gold_patches/ + training_unified_gold.jsonl → Hetzner1
+- `sync_dpo_from_anonserver.sh` — all DPO pair files → Hetzner1 + runs migrate_dpo_to_unified.py
+- Both crons: `0 */2 * * *` on Hetzner1
+- AnonServer files: NEVER deleted. Permanent backup.
+
+**When T68-S2 arrives:** Run fine-tuning directly from Hetzner1's `/root/sn66-ninja/training_data/`.
+
+---
+
 ## 📊 DATA ASSETS (Current Counts — verified 2026-05-19)
 
 | Dataset | Location (Hetzner1) | Records | Use |
