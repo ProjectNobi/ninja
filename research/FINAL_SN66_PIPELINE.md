@@ -429,6 +429,34 @@ tail -f /tmp/vNEXT_gate_50.log
 
 ## 🚀 STAGE 2: DEDICATED M2.7 PIPELINE (SOON — after T68-S2 NVLink)
 
+### 🔄 Continuous Fine-Tuning Loop (James directive 2026-05-19)
+**The dedicated M2.7 is NOT a one-time training job. It improves continuously.**
+
+```
+Fine-tune v1 → Gate test → More data arrives → Fine-tune v2 → Better gate → …
+```
+
+**Iteration plan:**
+1. **Tomorrow (T68-S2):** Fine-tune M2.7 on 368K SFT + 65K DPO → **M2.7-SN66-v1**
+2. **While v1 trains:** task4 generates ~120K more DPO pairs, live duels add daily signal
+3. **Test v1 on gate** → measure WR vs base M2.7
+4. **Fine-tune v2** with all accumulated data → better agent
+5. Repeat every 1-2 weeks
+
+**Why this never stops improving:**
+- Each live duel = new training signal (model learns from competition)
+- Every new king = new teaching data
+- DPO pairs teach judge preferences
+- Model improves as SN66 evolves with it
+
+**Data sufficiency (confirmed 2026-05-19):**
+- 368K SFT + 65K high-quality DPO = sufficient for strong v1
+- task4 completing adds ~30% more quality, not 3x
+- Don’t wait for task4 to finish — start fine-tune with what’s on Hetzner1
+
+---
+
+
 ### Trigger Conditions
 - T68-S2 DGX Spark arrives and NVLink bridge configured (NVIDIA playbook: connect-two-sparks)
 - All gold + DPO data collection complete (target: 9,122 tasks × all models)
