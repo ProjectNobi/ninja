@@ -128,7 +128,9 @@ MAX_COVERAGE_NUDGES = 1    # tell model which issue-mentioned paths are still un
 MAX_CRITERIA_NUDGES = 1    # tell model which issue acceptance-criteria look unaddressed
 MAX_HAIL_MARY_TURNS = 1    # last-resort: force a real edit when patch is empty after everything
 MAX_DELETION_NUDGES = 1    # surface missing removals when issue says delete/remove but patch has none
-MAX_TOTAL_REFINEMENT_TURNS = 3  # ninjaking66 PR#268 insight: chained refinements blow time budget;
+MAX_TOTAL_REFINEMENT_TURNS = 3  # ninjaking66 PR#268 insight
+_REFINEMENT_TIME_FLOOR_SECONDS = 32.0   # min remaining seconds to queue any refinement turn
+_HAIL_MARY_TIME_FLOOR_SECONDS = 18.0    # min remaining seconds for hail-mary turn: chained refinements blow time budget;
                                 # cap total refinement turns across all gates (hail-mary excepted).
                                 # Raised 2→3 after fixing multishot timing bug (attempt 2 now has a
                                 # bounded budget so extra turns can't push the process past the docker
@@ -640,6 +642,7 @@ def _sanitize_patch(diff_output: str) -> str:
 
     cleaned = _strip_skipped_file_diffs(diff_output)
     cleaned = _strip_mode_only_file_diffs(cleaned)
+    cleaned = _strip_mode_metadata_lines(cleaned)
     cleaned = _strip_low_signal_hunks(cleaned)
     cleaned = _split_comment_import_concat(cleaned)
 
@@ -2931,9 +2934,9 @@ SYSTEM_PROMPT = '''You are an elite autonomous coding agent competing in a real 
 You operate inside a real repository. You inspect the codebase, produce a patch, and verify it.
 
 Your patch is scored by an LLM judge on three dimensions:
-  1. ROOT CAUSE RESOLUTION (40 pts): Does the patch fix the actual root cause? Symptom fixes (guards, try/catch wrappers) score ~20/40. True root-cause replacement scores 35-40/40.
-  2. SCOPE COMPLETENESS (30 pts): Does the patch touch ALL affected files? If the reference changes 4 files and you change 1, you lose ~20 points. Follow type cascades, import chains, and caller updates.
-  3. ACCEPTANCE CRITERIA COVERAGE (20 pts): Does the patch address EVERY bullet point in the issue? Missing one AC item costs 5-15 points.
+  1. ROOT CAUSE RESOLUTION: Does the patch fix the actual root cause? Symptom fixes (guards, try/catch wrappers) are penalized. True root-cause replacement is rewarded.
+  2. SCOPE COMPLETENESS: Does the patch touch ALL affected files? Follow type cascades, import chains, and caller updates.
+  3. ACCEPTANCE CRITERIA COVERAGE: Does the patch address EVERY bullet point in the issue? Missing any AC item is penalized.
   4. CODE QUALITY (10 pts): Valid syntax, no stubs/TODOs, follows codebase conventions, includes docstrings on new functions.
 
 Do not pad your diff to improve scores — judges penalize obvious scope inflation. Fix exactly what the issue requires. Unnecessary changes (whitespace, import reorder, comment-only edits) actively hurt your score.
@@ -3148,7 +3151,7 @@ Repository summary:
 
 {repo_summary}
 {context_section}
-BEFORE PLANNING: Read the ENTIRE issue. List EVERY acceptance criterion, bullet point, and secondary clause. Your patch is scored by an LLM judge — missing ANY requirement costs 5-15 points.
+BEFORE PLANNING: Read the ENTIRE issue. List EVERY acceptance criterion, bullet point, and secondary clause. Your patch is scored by an LLM judge — missing ANY requirement is penalized.
 
 STRATEGY:
 1. Identify the root cause owner. Fix the actual bug, not a symptom.
@@ -4055,7 +4058,7 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
         # it's the only thing standing between us and a guaranteed-zero
         # empty-patch result.
         if not patch.strip():
-            if hail_mary_turns_used < MAX_HAIL_MARY_TURNS:
+            if hail_mary_turns_used < MAX_HAIL_MARY_TURNS and time_remaining() >= _HAIL_MARY_TIME_FLOOR_SECONDS:
                 hail_mary_turns_used += 1
                 queue_refinement_turn(
                     assistant_text,
@@ -4460,6 +4463,9 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
                     messages.append({"role": "user", "content": build_budget_pressure_prompt(step)})
 
         patch = get_patch(repo)
+        
+        # Minimal multi-shot refinement: one polishing pass
+        
         if patch.strip() and not success:
             logs.append("\nPATCH_RETURN:\nReturning the best patch produced within the step budget.")
             success = True

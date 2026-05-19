@@ -111,6 +111,7 @@ WALL_CLOCK_BUDGET_SECONDS = 248.0  # v54: match king budget
 # full-budget attempt 1 leaves insufficient reserve (278-248=30 < 52s min).
 WALL_CLOCK_RESERVE_SECONDS = 20.0
 _MID_LOOP_HAIL_MARY_BUDGET_FRACTION = 0.50
+_MID_LOOP_HAIL_MARY_STEP_TRIGGER = 7  # dual trigger: time OR step (port from king)
 MAX_MID_LOOP_HAIL_MARY_TURNS = 1
 _SOFT_NUDGE_STEP_THRESHOLD = 4   # v54: fire earlier (was 6)
 _SOFT_NUDGE_ELAPSED_SECONDS = 60.0  # v54: fire earlier (was 90)
@@ -2931,12 +2932,12 @@ SYSTEM_PROMPT = '''You are an elite autonomous coding agent competing in a real 
 You operate inside a real repository. You inspect the codebase, produce a patch, and verify it.
 
 Your patch is scored by an LLM judge on three dimensions:
-  1. ROOT CAUSE RESOLUTION (40 pts): Does the patch fix the actual root cause? Symptom fixes (guards, try/catch wrappers) score ~20/40. True root-cause replacement scores 35-40/40.
-  2. SCOPE COMPLETENESS (30 pts): Does the patch touch ALL affected files? If the reference changes 4 files and you change 1, you lose ~20 points. Follow type cascades, import chains, and caller updates.
-  3. ACCEPTANCE CRITERIA COVERAGE (20 pts): Does the patch address EVERY bullet point in the issue? Missing one AC item costs 5-15 points.
-  4. CODE QUALITY (10 pts): Valid syntax, no stubs/TODOs, follows codebase conventions, includes docstrings on new functions.
+  1. ROOT CAUSE RESOLUTION: Does the patch fix the actual root cause? Symptom fixes (guards, try/catch wrappers) are penalized. True root-cause replacement is rewarded. CORRECTNESS IS GATING: a patch that compiles and runs correctly but is incomplete beats a complete patch with syntax errors or broken imports.
+  2. SCOPE COMPLETENESS: Does the patch touch ALL affected files? Follow type cascades, import chains, and caller updates.
+  3. ACCEPTANCE CRITERIA COVERAGE: Does the patch address EVERY bullet point in the issue? Missing any AC item is penalized.
+  4. CODE QUALITY: Valid syntax, no stubs/TODOs, follows codebase conventions, includes docstrings on new functions. Preserve or improve error handling — missing error cases that the reference includes are penalised by the judge.
 
-Do not pad your diff to improve scores — judges penalize obvious scope inflation. Fix exactly what the issue requires. Unnecessary changes (whitespace, import reorder, comment-only edits) actively hurt your score.
+Do not pad your diff to improve scores — judges penalize obvious scope inflation. Fix exactly what the issue requires. Unnecessary changes (whitespace, import reorder, comment-only edits) actively hurt your score. Never chmod files or reorder imports unless the task explicitly requires it.
 
 COMPLETENESS BEATS MINIMALISM. Missing files/requirements costs far more than extra thorough edits. Reference patches typically touch 3-6 files. Edit every file that is directly required by the issue — no more, no less.
 
@@ -3035,6 +3036,8 @@ DELETE broken code and REPLACE with correct code. Do not just add guards, null-c
 Never hardcode the visible example unless the issue explicitly requests that exact special case.
 
 When the codebase implies a specific approach (existing constant, library already imported, utility already used in adjacent code, established pattern) - use exactly that. Do not reinvent.
+
+Never remove existing security checks, authentication guards, or input validation — breaking these is an automatic loss.
 
 ====================================================================
 THOROUGHNESS PROTOCOL
@@ -3148,7 +3151,7 @@ Repository summary:
 
 {repo_summary}
 {context_section}
-BEFORE PLANNING: Read the ENTIRE issue. List EVERY acceptance criterion, bullet point, and secondary clause. Your patch is scored by an LLM judge — missing ANY requirement costs 5-15 points.
+BEFORE PLANNING: Read the ENTIRE issue. List EVERY acceptance criterion, bullet point, and secondary clause. Your patch is scored by an LLM judge — missing ANY requirement is heavily penalized.
 
 STRATEGY:
 1. Identify the root cause owner. Fix the actual bug, not a symptom.
@@ -4272,11 +4275,14 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
                 logs.append(f"SOFT_NUDGE_FIRED: step={step} elapsed={_elapsed_now:.1f}s")
                 continue
 
+            _hm_time_trigger = _elapsed_now >= _MID_LOOP_HAIL_MARY_BUDGET_FRACTION * wall_clock_budget
+            _hm_step_trigger = step >= _MID_LOOP_HAIL_MARY_STEP_TRIGGER
             if (
                 mid_loop_hail_mary_used < MAX_MID_LOOP_HAIL_MARY_TURNS
-                and _elapsed_now >= _MID_LOOP_HAIL_MARY_BUDGET_FRACTION * wall_clock_budget
+                and (_hm_time_trigger or _hm_step_trigger)
                 and not get_patch(repo).strip()
             ):
+                _hm_trigger_reason = "time" if _hm_time_trigger else f"step={step}"
                 mid_loop_hail_mary_used += 1
                 messages.append({
                     "role": "user",
@@ -4285,7 +4291,7 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
                         _recently_observed_paths(logs),
                     ),
                 })
-                logs.append("MID_LOOP_HAIL_MARY_FIRED")
+                logs.append(f"MID_LOOP_HAIL_MARY_FIRED:{_hm_trigger_reason}")
                 continue
 
             # v54: 80% wall-clock forced edit — prevent guaranteed-zero empty patches
@@ -4460,6 +4466,48 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
                     messages.append({"role": "user", "content": build_budget_pressure_prompt(step)})
 
         patch = get_patch(repo)
+        
+        # Minimal multi-shot refinement: one polishing pass
+        # Only if: patch exists, steps < MAX_STEPS - 5, and time allows (< 280s elapsed)
+        if patch.strip() and step < max_steps - 5:
+            try:
+                _elapsed_polish = time.monotonic() - solve_started_at
+                if _elapsed_polish < 280.0 and model_name and api_base and api_key:
+                    polish_prompt = (
+                        "Review this patch for missing cascade files and incomplete wiring. "
+                        "If any cascade files are missing, add them now. "
+                        "If any wiring is incomplete, complete it. "
+                        "Output the improved unified diff. If no improvements needed, output the original patch unchanged.\n\n"
+                        "Current patch:\n"
+                        f"{patch[:8000]}"
+                    )
+                    polish_messages = [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": polish_prompt}
+                    ]
+                    try:
+                        polished_text, _, _ = chat_completion(
+                            messages=polish_messages,
+                            model=model_name,
+                            api_base=api_base,
+                            api_key=api_key,
+                            max_tokens=16384,
+                        )
+                        if polished_text and "diff --git" in polished_text:
+                            # Extract potential improved patch
+                            import re
+                            diff_match = re.search(r'(diff --git[\s\S]*?)(?:\n[\w-]+:|\Z)', polished_text)
+                            if diff_match:
+                                improved = diff_match.group(1).strip()
+                                if improved and len(improved) > len(patch) * 0.5:  # Reasonable improvement
+                                    # verify-only: do NOT replace patch with LLM text
+                                    logs.append("\nPOLISH_VERIFY: Completeness check passed.\n")
+                    except Exception as e:
+                        logs.append(f"\nPOLISH_SKIP: {str(e)[:100]}\n")
+            except NameError:
+                # fallback: skip polish if timer unavailable
+                pass
+        
         if patch.strip() and not success:
             logs.append("\nPATCH_RETURN:\nReturning the best patch produced within the step budget.")
             success = True

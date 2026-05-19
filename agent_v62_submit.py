@@ -4460,6 +4460,48 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
                     messages.append({"role": "user", "content": build_budget_pressure_prompt(step)})
 
         patch = get_patch(repo)
+        
+        # Minimal multi-shot refinement: one polishing pass
+        # Only if: patch exists, steps < MAX_STEPS - 5, and time allows (< 280s elapsed)
+        if patch.strip() and step < max_steps - 5:
+            try:
+                _elapsed_polish = time.monotonic() - _wall_clock_start
+                if _elapsed_polish < 280.0 and model_name and api_base and api_key:
+                    polish_prompt = (
+                        "Review this patch for missing cascade files and incomplete wiring. "
+                        "If any cascade files are missing, add them now. "
+                        "If any wiring is incomplete, complete it. "
+                        "Output the improved unified diff. If no improvements needed, output the original patch unchanged.\n\n"
+                        "Current patch:\n"
+                        f"{patch[:8000]}"
+                    )
+                    polish_messages = [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": polish_prompt}
+                    ]
+                    try:
+                        polished_text, _, _ = chat_completion(
+                            messages=polish_messages,
+                            model=model_name,
+                            api_base=api_base,
+                            api_key=api_key,
+                            max_tokens=16384,
+                        )
+                        if polished_text and "diff --git" in polished_text:
+                            # Extract potential improved patch
+                            import re
+                            diff_match = re.search(r'(diff --git[\s\S]*?)(?:\n[\w-]+:|\Z)', polished_text)
+                            if diff_match:
+                                improved = diff_match.group(1).strip()
+                                if improved and len(improved) > len(patch) * 0.5:  # Reasonable improvement
+                                    patch = improved
+                                    logs.append("\nPOLISH_PASS: Applied patch improvements from refinement\n")
+                    except Exception as e:
+                        logs.append(f"\nPOLISH_SKIP: {str(e)[:100]}\n")
+            except NameError:
+                # _wall_clock_start may not be defined in some paths - skip polish
+                pass
+        
         if patch.strip() and not success:
             logs.append("\nPATCH_RETURN:\nReturning the best patch produced within the step budget.")
             success = True

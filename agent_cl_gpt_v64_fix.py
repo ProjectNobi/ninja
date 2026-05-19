@@ -128,7 +128,9 @@ MAX_COVERAGE_NUDGES = 1    # tell model which issue-mentioned paths are still un
 MAX_CRITERIA_NUDGES = 1    # tell model which issue acceptance-criteria look unaddressed
 MAX_HAIL_MARY_TURNS = 1    # last-resort: force a real edit when patch is empty after everything
 MAX_DELETION_NUDGES = 1    # surface missing removals when issue says delete/remove but patch has none
-MAX_TOTAL_REFINEMENT_TURNS = 3  # ninjaking66 PR#268 insight: chained refinements blow time budget;
+MAX_TOTAL_REFINEMENT_TURNS = 3  # ninjaking66 PR#268 insight
+_REFINEMENT_TIME_FLOOR_SECONDS = 32.0   # min remaining seconds to queue any refinement turn
+_HAIL_MARY_TIME_FLOOR_SECONDS = 18.0    # min remaining seconds for hail-mary turn: chained refinements blow time budget;
                                 # cap total refinement turns across all gates (hail-mary excepted).
                                 # Raised 2→3 after fixing multishot timing bug (attempt 2 now has a
                                 # bounded budget so extra turns can't push the process past the docker
@@ -640,6 +642,7 @@ def _sanitize_patch(diff_output: str) -> str:
 
     cleaned = _strip_skipped_file_diffs(diff_output)
     cleaned = _strip_mode_only_file_diffs(cleaned)
+    cleaned = _strip_mode_metadata_lines(cleaned)
     cleaned = _strip_low_signal_hunks(cleaned)
     cleaned = _split_comment_import_concat(cleaned)
 
@@ -2455,7 +2458,76 @@ def _run_companion_test(
         output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
         return output[-2400:] if len(output) > 2400 else output
 
+    # ---- NEW (P1 #4): Go ---------------------------------------------------
+    # Unlike the JS/TS path above (which only PARSES the file via `node
+    # --check`), this branch actually executes `go test`, scoped to the
+    # test's package directory so the run stays cheap. The dominant Go
+    # regression class is "patch broke an assertion", which only a real
+    # runner catches. Skipped silently when `go` is not on PATH (often the
+    # case in slim sandboxes).
+    if suffix == ".go":
+        if not _has_executable("go"):
+            return None
+        pkg_dir = str(Path(test_path).parent) or "."
+        pkg_target = "./" + pkg_dir if pkg_dir != "." else "./..."
+        go_timeout = max(timeout_seconds, 15)  # cold cache needs more than 8s
+        try:
+            proc = subprocess.run(
+                ["go", "test", "-count=1", "-timeout", "10s", pkg_target],
+                cwd=str(repo),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=go_timeout,
+                env=_command_env(),
+            )
+        except subprocess.TimeoutExpired:
+            return f"Companion test `{test_path}` (go test) timed out after {go_timeout}s."
+        except Exception:
+            return None
+        if proc.returncode == 0:
+            return None
+        output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        # Environmental noise (no module, missing dependencies, no Go files
+        # in the package) is NOT a real test failure. Returning None here
+        # avoids queuing a fix turn for something the agent can't act on.
+        if "no Go files" in output or "cannot find module" in output:
+            return None
+        return output[-2400:] if len(output) > 2400 else output
+
+    # ---- NEW (P1 #4): Rust -------------------------------------------------
+    # Full `cargo test` runs are minutes on a cold target/ cache -- far too
+    # slow for the 8s default budget. `cargo check --tests` compiles the
+    # test crate WITHOUT executing, catching any new compile error the patch
+    # introduced (the dominant regression class for surgical edits).
+    # `--offline` prevents any registry hit so the gate works in sandboxed
+    # runs with no network. Skipped silently when `cargo` is unavailable.
+    if suffix == ".rs":
+        if not _has_executable("cargo"):
+            return None
+        cargo_timeout = max(timeout_seconds, 20)
+        try:
+            proc = subprocess.run(
+                ["cargo", "check", "--tests", "--offline"],
+                cwd=str(repo),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=cargo_timeout,
+                env=_command_env(),
+            )
+        except subprocess.TimeoutExpired:
+            return f"Companion test `{test_path}` (cargo check) timed out after {cargo_timeout}s."
+        except Exception:
+            return None
+        if proc.returncode == 0:
+            return None
+        output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        return output[-2400:] if len(output) > 2400 else output
+
     return None  # other languages: skip
+
+
 
 
 def _select_companion_test_failure(
@@ -2931,14 +3003,14 @@ SYSTEM_PROMPT = '''You are an elite autonomous coding agent competing in a real 
 You operate inside a real repository. You inspect the codebase, produce a patch, and verify it.
 
 Your patch is scored by an LLM judge on three dimensions:
-  1. ROOT CAUSE RESOLUTION (40 pts): Does the patch fix the actual root cause? Symptom fixes (guards, try/catch wrappers) score ~20/40. True root-cause replacement scores 35-40/40.
-  2. SCOPE COMPLETENESS (30 pts): Does the patch touch ALL affected files? If the reference changes 4 files and you change 1, you lose ~20 points. Follow type cascades, import chains, and caller updates.
-  3. ACCEPTANCE CRITERIA COVERAGE (20 pts): Does the patch address EVERY bullet point in the issue? Missing one AC item costs 5-15 points.
-  4. CODE QUALITY (10 pts): Valid syntax, no stubs/TODOs, follows codebase conventions, includes docstrings on new functions.
+  1. ROOT CAUSE RESOLUTION: Does the patch fix the actual root cause? Symptom fixes (guards, try/catch wrappers) are penalized. True root-cause replacement is rewarded.
+  2. SCOPE COMPLETENESS: Does the patch touch ALL affected files? Follow type cascades, import chains, and caller updates.
+  3. ACCEPTANCE CRITERIA COVERAGE: Does the patch address EVERY bullet point in the issue? Missing any AC item is penalized.
+  4. CODE QUALITY (): Valid syntax, no stubs/TODOs, follows codebase conventions, includes docstrings on new functions.
 
-Do not pad your diff to improve scores — judges penalize obvious scope inflation. Fix exactly what the issue requires. Unnecessary changes (whitespace, import reorder, comment-only edits) actively hurt your score.
+Do not pad your diff to improve scores — are penalized obvious scope inflation. Fix exactly what the issue requires. Unnecessary changes (whitespace, import reorder, comment-only edits) actively hurt your score.
 
-COMPLETENESS BEATS MINIMALISM. Missing files/requirements costs far more than extra thorough edits. Reference patches typically touch 3-6 files. Edit every file that is directly required by the issue — no more, no less.
+COMPLETENESS BEATS MINIMALISM. Missing files/requirements costs far more than extra thorough edits. Multi-file issues typically require changes across several files. Edit every file that is directly required by the issue — no more, no less.
 
 ====================================================================
 UPDATE TASK WIRING RULE
@@ -2950,7 +3022,7 @@ functionality into the existing system lifecycle:
 - Update all call sites that need to invoke or observe the new behavior
 - Add fallback/error handling that integrates with existing error patterns
 Judges penalize patches that add isolated code without wiring it into the system.
-A feature that exists but is never called = 0 points.
+An isolated feature that is never called will not satisfy the requirements.
 
 ====================================================================
 LANGUAGE-SPECIFIC COMPLETENESS RULES
@@ -3111,7 +3183,7 @@ SCOPE DISCIPLINE
 
 Do NOT change: whitespace-only hunks, unused imports, type annotations not in the changed function, unrelated refactors, file permissions.
 
-But DO change: every file the fix genuinely requires. Under-editing (missing a cascade file) is penalized MORE than slight over-editing. When in doubt, include the file.
+But DO change: every file the fix genuinely requires. Missing required cascade files costs more than including an extra related file. When in doubt, include the file.
 
 Before <final>: check every AC bullet has a matching patch change. If any is missing, fix it first.
 
@@ -3148,7 +3220,7 @@ Repository summary:
 
 {repo_summary}
 {context_section}
-BEFORE PLANNING: Read the ENTIRE issue. List EVERY acceptance criterion, bullet point, and secondary clause. Your patch is scored by an LLM judge — missing ANY requirement costs 5-15 points.
+BEFORE PLANNING: Read the ENTIRE issue. List EVERY acceptance criterion, bullet point, and secondary clause. Your patch is scored by an LLM judge — missing ANY requirement is penalized.
 
 STRATEGY:
 1. Identify the root cause owner. Fix the actual bug, not a symptom.
@@ -3157,7 +3229,7 @@ STRATEGY:
 4. Include ALL edit commands in the SAME response. Do not split across turns.
 5. Run the most targeted test available, then finish with <final>...</final>.
 
-COMPLETENESS RULE: Reference patches typically touch 3-6 files. If your patch touches only 1-2 files for a multi-requirement issue, you are almost certainly under-editing. Find and update the cascade files.
+COMPLETENESS RULE: Multi-file issues typically require changes across several files. If your patch touches only 1-2 files for a multi-requirement issue, you are almost certainly under-editing. Find and update the cascade files.
 
 If the preloaded snippets show the target code, edit directly. If unclear, run ONE focused grep to locate it, then edit immediately.
 """
@@ -3803,6 +3875,81 @@ def _multishot_count_substantive(patch: str) -> int:
     return n
 
 
+# -----------------------------
+# -----------------------------
+def _companion_test_timeout_seconds(command_timeout: int, remaining_seconds: float) -> int:
+    """Scale companion-test budget with remaining wall-clock without starving the loop."""
+    if remaining_seconds <= _REFINEMENT_TIME_FLOOR_SECONDS:
+        return 8
+    return int(min(max(8, command_timeout // 2), 14, max(8, remaining_seconds // 6)))
+
+def _suggest_targeted_test_command(repo: Path, patch: str) -> Optional[str]:
+    """Return a single repo-local verification command for edited companion tests."""
+    edited = _patch_changed_files(patch)
+    if not edited:
+        return None
+    tracked = set(_tracked_files(repo))
+    for relative_path in edited:
+        partner = _find_test_partner(relative_path, tracked)
+        if not partner:
+            continue
+        suffix = Path(partner).suffix.lower()
+        if suffix == ".py":
+            return f"pytest {partner} -x -q --tb=short"
+        if suffix in {".ts", ".tsx", ".js", ".jsx"}:
+            return f"npm test -- {partner}"
+        if suffix == ".go":
+            pkg = str(Path(partner).parent) or "."
+            return f"go test {pkg} -count=1"
+        if suffix == ".rs":
+            return "cargo test --offline -q"
+    return None
+
+def _patch_ship_blockers(patch: str, issue: str) -> List[str]:
+    """Structural gaps that correlate with losing duels vs king."""
+    if not patch.strip():
+        return ["empty_patch"]
+    blockers: List[str] = []
+    if not _patch_covers_required_paths(patch, issue):
+        blockers.append("required_paths_uncovered")
+    if _issue_requires_deletion(issue) and not _patch_has_deletions(patch):
+        blockers.append("missing_required_deletions")
+    if _issue_implies_relocation(issue) and not _patch_creates_any_new_file(patch):
+        blockers.append("relocation_incomplete")
+    if len(_unaddressed_criteria(patch, issue)) >= 2:
+        blockers.append("criteria_mostly_unaddressed")
+    return blockers
+
+def _patch_duel_score(patch: str, issue: str) -> int:
+    """Rank candidate patches for multishot winner selection (higher is better)."""
+    if not patch.strip():
+        return 0
+    score = _multishot_count_substantive(patch) * 10
+    if _patch_covers_required_paths(patch, issue):
+        score += 30
+    unaddressed = _unaddressed_criteria(patch, issue)
+    score += max(0, 35 - 12 * len(unaddressed))
+    if _issue_requires_deletion(issue):
+        if _patch_has_deletions(patch):
+            score += 20
+    if _issue_implies_relocation(issue) and _patch_creates_any_new_file(patch):
+        score += 25
+    score -= 18 * len(_patch_ship_blockers(patch, issue))
+    return score
+
+def build_ship_blocker_prompt(blockers: List[str], issue: str) -> str:
+    short = issue[:1200] if len(issue) > 1200 else issue
+    items = "\n".join(f"  - {b}" for b in blockers[:6])
+    return (
+        "Your patch is not ready to ship yet. The solver detected these gaps:\n"
+        f"{items}\n\n"
+        "Address the highest-priority gap with the smallest additional edit(s), "
+        "run a targeted verification command, then emit <final>summary</final>.\n\n"
+        "Task reminder:\n"
+        f"{short}\n"
+    )
+
+
 def _multishot_capture_head(repo: Path) -> Optional[str]:
     try:
         proc = subprocess.run(
@@ -3828,6 +3975,39 @@ def _multishot_revert(repo: Path, head: Optional[str]) -> None:
                        cwd=str(repo), capture_output=True, text=True, timeout=30, check=False)
     except Exception:
         pass
+
+
+
+_LOCKFILE_BASENAMES = {
+    "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb",
+    "Cargo.lock", "Gemfile.lock", "composer.lock", "go.sum",
+    "poetry.lock", "uv.lock", "pdm.lock", "pubspec.lock",
+    "Pipfile.lock", "mix.lock",
+}
+
+
+def _strip_lockfile_diffs_unless_mentioned(patch: str, issue_text: str) -> str:
+    try:
+        if not patch.strip():
+            return patch
+        issue_lower = (issue_text or "").lower()
+        blocks = re.split(r"(?=^diff --git )", patch, flags=re.MULTILINE)
+        kept: List[str] = []
+        for block in blocks:
+            if not block:
+                continue
+            path = _diff_block_path(block)
+            base = Path(path).name if path else ""
+            if base in _LOCKFILE_BASENAMES and base.lower() not in issue_lower:
+                continue
+            kept.append(block)
+        result = "".join(kept)
+        if patch.endswith("\n") and result and not result.endswith("\n"):
+            result += "\n"
+        return result
+    except Exception:
+        return patch
+
 
 
 def _multishot_apply_patch(repo: Path, patch_text: str) -> bool:
@@ -4055,7 +4235,7 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
         # it's the only thing standing between us and a guaranteed-zero
         # empty-patch result.
         if not patch.strip():
-            if hail_mary_turns_used < MAX_HAIL_MARY_TURNS:
+            if hail_mary_turns_used < MAX_HAIL_MARY_TURNS and time_remaining() >= _HAIL_MARY_TIME_FLOOR_SECONDS:
                 hail_mary_turns_used += 1
                 queue_refinement_turn(
                     assistant_text,
@@ -4458,12 +4638,64 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
                     logs.append(f"BUDGET_PRESSURE_DEFERRED: step={step} (target named in last assistant message)")
                 else:
                     messages.append({"role": "user", "content": build_budget_pressure_prompt(step)})
+        
+        # v64: Try smart test command suggestion if available
+        _verify_hint = None
+        try:
+            _verify_hint = _suggest_targeted_test_command(repo, get_patch(repo))
+        except Exception:
+            pass
 
         patch = get_patch(repo)
+        
+        # v64: Ship blocker detection + retry (from king d24c9d3)
+        try:
+            _issue_text = issue
+            _patch1 = patch
+            _score1 = _patch_duel_score(_patch1, _issue_text) if _patch1.strip() else 0
+            _attempt1_blockers = _patch_ship_blockers(_patch1, _issue_text)
+            _steps_remaining = max_steps - step
+            _elapsed_now = time.monotonic() - solve_started_at
+            if _attempt1_blockers and _steps_remaining >= 8 and _elapsed_now < 250 and patch.strip():
+                logs.append(f"\nSHIP_BLOCKER_DETECTED: {_attempt1_blockers}, retrying with fix guidance...")
+                _blocker_prompt = build_ship_blocker_prompt(_attempt1_blockers, _issue_text)
+                messages.append({"role": "user", "content": _blocker_prompt})
+                _retry_steps = 0
+                while _retry_steps < 6 and step < max_steps:
+                    _resp, _, _ = chat_completion(messages=messages, model=model_name, api_base=api_base, api_key=api_key, max_tokens=4096)
+                    if not _resp:
+                        break
+                    messages.append({"role": "assistant", "content": _resp})
+                    _commands = extract_commands(_resp)
+                    for _cmd in _commands[:MAX_COMMANDS_PER_RESPONSE]:
+                        _out = run_command(_cmd, repo, timeout=DEFAULT_COMMAND_TIMEOUT)
+                        messages.append({"role": "user", "content": f"<output>\n{_out}\n</output>"})
+                    step += 1
+                    _retry_steps += 1
+                    if "<final>" in _resp:
+                        break
+                _patch2 = get_patch(repo)
+                _score2 = _patch_duel_score(_patch2, _issue_text) if _patch2.strip() else 0
+                if _score2 > _score1 and _patch2.strip():
+                    logs.append(f"\nSHIP_BLOCKER_RETRY_SUCCESS: score {_score1} -> {_score2}")
+                    patch = _patch2
+                else:
+                    logs.append(f"\nSHIP_BLOCKER_RETRY_NO_IMPROVEMENT: keeping original (score {_score1})")
+        except Exception as _e:
+            logs.append(f"\nSHIP_BLOCKER_ERROR: {_e}")
+        
+        # Minimal multi-shot refinement: one polishing pass
+        
         if patch.strip() and not success:
             logs.append("\nPATCH_RETURN:\nReturning the best patch produced within the step budget.")
             success = True
         step_count = len([x for x in logs if x.startswith("\n\n===== STEP")])
+        # Strip lockfile diffs unless issue explicitly mentions them
+        try:
+            if patch.strip():
+                patch = _strip_lockfile_diffs_unless_mentioned(patch, issue)
+        except Exception:
+            pass
         return AgentResult(
             patch=patch,
             logs=_safe_join_logs(logs),
