@@ -406,3 +406,46 @@ King base + minimum additions → CI 72 ✅
 ### Cost Impact Today (2026-05-19)
 - Wasted registrations from false belief hotkeys were spent: τ0 wasted (all recovered)
 - sn66-rsvd-1 (CI 62 → CI 78): recovered ✅ | sn66-rsvd-5 (CI 62): available for next version
+
+---
+
+## 🏛️ KING-BASE RULE — MANDATORY FOR ALL FUTURE VERSIONS (James directive 2026-05-19)
+
+**Every new agent version MUST be built starting from the current king's source code.**
+
+### Why
+The CI judge diffs your submitted agent against the current king. The more you diverge from the king, the lower your CI score:
+- King-base + 1 targeted addition → CI 78 ✅
+- v62b + 5 additions → CI 72 ✅ (barely passing, more divergence)
+- v62b + more additions → CI 62 ❌ (too much divergence, rejected)
+
+### The Rule
+```
+BASE = current king_agent.py (always sync before building)
++ your targeted improvements (minimum additions only)
+= new version
+```
+
+### How to Build Correctly
+1. `bash scripts/sync_king.sh` — sync latest king before EVERY build
+2. `cp king_agent.py agent_cl_gpt_vXX_ci.py` — start from king
+3. Add ONLY your improvements (new SYSTEM_PROMPT rules, new mechanisms)
+4. Submit the king-base version for CI
+5. The v62b-based version can still be used for gate testing (local research)
+   but submit the king-base version for live competition
+
+### What "v62b base" is good for
+- Gate testing (local research to understand if new rules help)
+- Research/experimentation
+- NOT for submission — v62b diverges too much from king for CI
+
+### Versions that prove this rule (2026-05-19)
+| Version | Base | CI | Outcome |
+|---------|------|----|---------|
+| v62b-re | king + UPDATE WIRING | 78 ✅ | LIVE |
+| v66 | v62b + 5 changes | 72 ✅ (borderline) | LIVE |
+| v67 (first) | v62b + 4 changes | 62 ❌ | REJECTED |
+| v67ci | king + UPDATE WIRING + 4 changes | 72 ✅ | LIVE |
+| v67 (rsvd-1 retry) | king + UPDATE WIRING + 4 changes | 78 ✅ | LIVE |
+
+**Lesson ID: L-SN66-KING-BASE-MANDATORY-1**

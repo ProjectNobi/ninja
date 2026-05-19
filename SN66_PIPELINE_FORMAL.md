@@ -691,3 +691,33 @@ Built from: agent_cl_gpt_v62_fix.py (original v62b, 4,644L) — per James direct
 **Rule:** After CI 62 "failed" → DO NOT register a new hotkey. Fix the agent and resubmit to the SAME hotkey.
 
 **How to fix CI 62:** Switch to king-base + minimum additions (L-SN66-CI-VBASE-MATTERS-1). Never try v62b base again for CI submissions.
+
+---
+
+## 🏛️ KING-BASE MANDATORY RULE — ALL FUTURE VERSIONS (James directive 2026-05-19)
+
+**L-SN66-KING-BASE-MANDATORY-1**
+
+> **ALL submitted agents MUST use the current king's source code as base.**
+> King-base + minimum targeted improvements = correct architecture.
+
+### Why the CI system enforces this
+The SN66 private submission CI judge compares your agent diff against the current king. Divergence = lower score:
+- Minimal diff from king → CI 78 ✅
+- Medium divergence (v62b + changes) → CI 72 ✅ (borderline)  
+- High divergence (v62b + more changes) → CI 62 ❌ REJECTED
+
+### Build pipeline (MANDATORY going forward)
+```
+Step 0: bash scripts/sync_king.sh        ← ALWAYS first
+Step 1: cp king_agent.py vNext_ci.py     ← king as base
+Step 2: Add targeted improvements         ← minimum additions
+Step 3: Submit vNext_ci.py               ← guaranteed CI ≥ 72
+```
+
+### v62b role (clarified)
+- v62b-based versions → gate testing only (local research, WR measurement)
+- NOT for submission to the live competition
+- The gate test results from v62b still give valid signal about which improvements work
+
+### Also applies to: ALL future versions (v68, v69, etc.)
