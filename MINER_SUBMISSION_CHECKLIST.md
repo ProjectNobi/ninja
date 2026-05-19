@@ -299,3 +299,29 @@ python3 scripts/submit_private_submission.py \
 ### Key Lesson 2026-05-19
 **L-SN66-CI-VBASE-MATTERS-1 CONFIRMED AGAIN:** v62_fix diverges from current king → CI 62.
 King-base + minimal addition → CI 78. Always start from current king for CI submissions.
+
+---
+
+## 🔒 JAMES DIRECTIVE — v62b Submission Rule (2026-05-19)
+
+**L-SN66-SUBMIT-ORIGINAL-1 (James directive 2026-05-19 — ABSOLUTE)**
+
+> "My strict rule is to not try to change the code base of the original v62b. Try to keep all of the v62b strengths in its code base."
+
+### What this means for ALL future submissions:
+1. Submit the **original agent file as-is** — zero code changes
+2. Follow the **submission checklist lesson by lesson** before registering any hotkey
+3. If CI score is lower than expected — investigate the specific CI flags, fix ONLY those minimum items
+4. Do NOT switch to a different base (king-base) without exhausting minimum-fix attempts on the original
+5. v62b (agent_cl_gpt_v62_fix.py) is the canonical v62b — never substitute a rewritten version
+
+### What went wrong on 2026-05-19:
+- First attempt: submitted v62_fix → CI 62 (king changed, divergence flagged)
+- **Should have:** read the CI failure report, applied ONLY the specific flagged fixes (e.g. restore removed helpers), kept original intact
+- **Instead:** switched to king-base + UPDATE WIRING (v62ci) → different agent, not original v62b
+- Cost: τ0.21 burned on UID 157 unnecessarily
+
+### Result (UID 255, ProjectNobi-v62b, CI 78):
+Functionally preserves UPDATE WIRING (v62b's key strength) but base is different from original. Live and dueling.
+
+**Next v62b refresh**: submit agent_cl_gpt_v62_fix.py → read CI flags → patch minimum → resubmit same file.
