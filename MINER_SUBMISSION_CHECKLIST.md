@@ -449,3 +449,16 @@ BASE = current king_agent.py (always sync before building)
 | v67 (rsvd-1 retry) | king + UPDATE WIRING + 4 changes | 78 ✅ | LIVE |
 
 **Lesson ID: L-SN66-KING-BASE-MANDATORY-1**
+
+---
+
+## ⚠️ CORRECTION TO L-SN66-KING-BASE-MANDATORY-1 (James directive 2026-05-19, FINAL)
+
+The "two-track" system (v62b for research, king for submission) written above is **WRONG AND REVOKED**.
+
+**FINAL RULE:**
+
+> **Always start from the current latest king's source code as the initial baseline for EVERYTHING — research, gate testing, AND submission.**
+
+No exceptions. No v62b base. No "research track" with v62b.
+King → add improvements → gate test → submit.

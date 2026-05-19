@@ -721,3 +721,41 @@ Step 3: Submit vNext_ci.py               ← guaranteed CI ≥ 72
 - The gate test results from v62b still give valid signal about which improvements work
 
 ### Also applies to: ALL future versions (v68, v69, etc.)
+
+---
+
+## 🏛️ L-SN66-KING-BASE-MANDATORY-1 — CORRECTION (James directive 2026-05-19, FINAL)
+
+**CORRECTED RULE (replaces previous version above):**
+
+> **ALWAYS start from the current latest king's source code as the initial baseline for the ENTIRE pipeline — research, gate testing, AND live submission.**
+
+This applies to EVERY step in the SN66-Pipeline-Formal process:
+- Step 1b (King code analysis) → read king, extract patterns
+- Step 4 (Build) → `cp king_agent.py agent_vNext.py` as the FIRST action
+- Gate testing → test your king-base version against the king
+- CI submission → submit the king-base version
+
+### There is NO "two-track" system
+The previous note about "v62b for research, king for submission" is WRONG and REVOKED.
+
+**ONE rule: king source = starting point for everything.**
+
+Build = king + targeted improvements (minimum additions)
+Gate test the king-based version
+Submit the king-based version
+
+### Why this is stronger than just "for CI"
+1. The king is the current best agent — it already has everything working
+2. Starting from king means you inherit all its strengths by default
+3. You only need to add what the king lacks (your targeted improvements)
+4. This minimizes risk of regression and maximizes CI score
+
+### Pipeline Step 0 (mandatory, before Step 1a):
+```bash
+cd /root/sn66-ninja && bash scripts/sync_king.sh
+wc -l king_agent.py  # Confirm king is updated
+```
+THEN: `cp king_agent.py agent_cl_gpt_vNext.py`
+
+**This is the law for all future SN66 pipeline runs.**
