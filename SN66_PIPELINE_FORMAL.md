@@ -676,3 +676,18 @@ Built from: agent_cl_gpt_v62_fix.py (original v62b, 4,644L) — per James direct
 - Agent: /root/sn66-ninja/agent_cl_gpt_v66.py
 - Research: research/ROOT_CAUSE_SN66_v66.md, research/DEBATE_ROOT_CAUSE_SN66_v66.md
 - King ref: /root/sn66-ninja/king_agent.py (d24c9d3)
+
+---
+
+## 🔑 HOTKEY REUSE RULE (James directive 2026-05-19 — VERIFIED)
+
+**L-SN66-CI-HOTKEY-SPENT-1 CORRECTED:**
+
+| CI Result | Score | Status | Hotkey State |
+|-----------|-------|--------|-------------|
+| CI passed | ≥ 72 | "passed" | **SPENT** — agent live in duel queue |
+| CI failed | ≤ 62 | "failed" | **REUSABLE** — agent rejected, hotkey free |
+
+**Rule:** After CI 62 "failed" → DO NOT register a new hotkey. Fix the agent and resubmit to the SAME hotkey.
+
+**How to fix CI 62:** Switch to king-base + minimum additions (L-SN66-CI-VBASE-MATTERS-1). Never try v62b base again for CI submissions.

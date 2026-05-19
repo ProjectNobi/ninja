@@ -377,3 +377,32 @@ Functionally preserves UPDATE WIRING (v62b's key strength) but base is different
 ### L-SN66-CI-VBASE-MATTERS-1 CONFIRMED AGAIN
 v62b base → CI 62 (diverges too much from current king)
 King base + minimum additions → CI 72 ✅
+
+---
+
+## 🔑 LESSON CORRECTION — L-SN66-CI-HOTKEY-SPENT-1 (2026-05-19)
+
+**ORIGINAL (WRONG):** "Each hotkey is consumed after first submission attempt — pass OR fail."
+
+**CORRECTED (VERIFIED 2026-05-19):**
+
+> **CI PASS (score ≥ 72, status="passed") = hotkey SPENT** — agent accepted into duel queue, hotkey cannot be reused.
+>
+> **CI FAIL (score ≤ 62, status="failed") = hotkey REUSABLE** — agent rejected, hotkey is FREE to submit again with a better agent.
+
+### How We Learned This
+- sn66-rsvd-1 (UID 157): got CI 62 ("failed") on v62_fix → submitted v67ci → got CI 78 ("passed") ✅
+- sn66-rsvd-5 (UID 162): got CI 62 ("failed") on v67.py → still reusable for next submission
+
+### Practical Impact
+- CI failures do NOT waste hotkeys — you can fix the agent and retry
+- Only successful CI passes consume the hotkey permanently
+- Never panic-register new hotkeys after a CI 62 — fix the agent and resubmit to the same hotkey
+
+### Updated Strategy
+1. Submit → CI ≥ 72 (passed) → hotkey spent, agent LIVE ✅
+2. Submit → CI 62 (failed) → hotkey FREE → fix agent base → resubmit same hotkey
+
+### Cost Impact Today (2026-05-19)
+- Wasted registrations from false belief hotkeys were spent: τ0 wasted (all recovered)
+- sn66-rsvd-1 (CI 62 → CI 78): recovered ✅ | sn66-rsvd-5 (CI 62): available for next version
