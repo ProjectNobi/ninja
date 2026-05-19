@@ -506,11 +506,16 @@ with open('training_data/full_matrix_dpo_pairs.jsonl') as f:
 **Data:** `judge_training_sft.jsonl` — **>176K consensus pairs** (204,292 total, 86.4% consensus)
 **Filter:** `consensus=True` — 176,587 pairs
 **Format:** `(task, patch_A, patch_B) → (score_A, score_B, winner, rationale)` — SFT
-**Training objective:** Teach M2.7 to score patches like:
-- **Phase 1 (single judge):** `sonnet_winner` / `sonnet_rationale` fields → score like Sonnet 4.6 alone
-- **Phase 2 (dual judges):** `consensus=True` pairs where BOTH Sonnet 4.6 AND GPT-5.4 agree → score like the dual-judge consensus mechanism
+**Training objective:** Teach M2.7 to score patches like BOTH judges simultaneously — **one training run covers Phase 1 and Phase 2**.
 
-> When Phase 2 launches: re-train FT-3 using only `consensus=True AND sonnet_winner==gpt54_winner` pairs (highest-quality signal — both judges agree)
+> **✅ SINGLE TRAINING RUN STRATEGY (James directive 2026-05-19)**
+> Train ONLY on `consensus=True` pairs (176K) — where Sonnet 4.6 AND GPT-5.4 already agree.
+> - Phase 1 (Sonnet single judge): consensus pairs = valid Sonnet 4.6 signal ✅
+> - Phase 2 (dual judges): consensus pairs = exactly what wins ✅
+> - No retraining needed when validator upgrades to Phase 2
+> - The ~14% disagreement cases are excluded — they are noisy/contradictory signal, excluding them is a benefit
+>
+> **Filter:** `consensus=True AND sonnet_winner==gpt54_winner` (strongest signal — both judges explicitly agree on winner)
 
 ```python
 judge_training = []
