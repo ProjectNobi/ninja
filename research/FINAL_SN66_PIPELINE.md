@@ -689,9 +689,9 @@ Every win generates training data that makes the next version stronger.
 - **4× faster** than other frontier models | Terminal-Bench 2.1: 76.2% | MCP Atlas: 83.6%
 - Outperforms Gemini 3.1 Pro on coding + agentic tasks
 - Available now: Gemini API / Google AI Studio / OpenRouter
-- **Option A:** Sonnet 4.6 + Gemini 3.5 Flash (replace GPT-5.4 — cheaper + faster)
-- **Option B:** Sonnet 4.6 + GPT-5.4 + Gemini 3.5 Flash (triple consensus)
-- **Gold run:** ❌ NOT YET — start one when OR/Chutes lists `google/gemini-3.5-flash`
+- **✅ AVAILABLE on OR:** `google/gemini-3.5-flash` | 1M ctx | $1.50/M input
+- **Judge upgrade option:** Sonnet 4.6 + Gemini 3.5 Flash (replace GPT-5.4 — 4× faster, 1M ctx)
+- **Gold run:** ❌ NOT YET — START (model confirmed on OR as of 2026-05-19)
 
 ---
 
