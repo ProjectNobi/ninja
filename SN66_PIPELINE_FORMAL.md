@@ -1,5 +1,15 @@
 # SN66 MINING PIPELINE — FORMAL INSTRUCTIONS
 *James directive 2026-05-18 | Last updated: 2026-05-19 (king-base rule + judge mechanism)*
+
+## 📌 CURRENT PIPELINE LESSON (2026-05-19)
+**v71 = best current challenger | Gate running**
+- Base: king d24c9d3 (4595L) + 33 lines (UPDATE WIRING RULE + Sonnet 4.6 rubric + task-type strategy)
+- Root cause fixed: UPDATE WIRING RULE stripped in v68 → UPDATE WR 57%→14% → restored in v71
+- Gate: `v71gate` tmux | 100 tasks seed 42 --timeout 600 | threshold ≥70%
+- Key lesson: ALWAYS use --timeout 600 (king is multishot)
+- Key lesson: UPDATE WIRING RULE = the #1 rule — never strip it again
+
+
 *T68Bot standing operating procedure — OFFICIAL VERSION*
 
 ---

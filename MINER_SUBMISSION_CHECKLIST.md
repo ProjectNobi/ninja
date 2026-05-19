@@ -15,27 +15,28 @@
 
 ---
 
-## 🔥 CURRENT BEST CHALLENGER — agent_cl_gpt_v49.py
+## 🔥 CURRENT BEST CHALLENGER — agent_cl_gpt_v71.py
 | Field | Value |
 |-------|-------|
-| Version | **CL-GPT-v49** |
-| File | `/root/sn66-ninja/agent_cl_gpt_v49.py` |
-| Archive | `/root/sn66-ninja/agents_archive/agent_cl_gpt_v49.py` |
-| Lines | 5,094 (+303 vs v41 base) |
-| Built | 2026-05-15 by Opus 4.7 |
-| Audit | ✅ CLEAN — 0 critical issues, all 8 rules pass |
-| Gate test | Running — 25 tasks x 3 seeds vs new king, GPT-5.4 judge |
-| Gate threshold | >=70% decisive WR — ask James for submission approval |
-| Base | v41 (59.5% vs adamninja) |
-| Estimated WR | 60-65% conservative, 65-70% optimistic vs new king |
+| Version | **CL-GPT-v71** |
+| File | `/root/sn66-ninja/agent_cl_gpt_v71.py` |
+| Lines | 4,627 (+33 vs king 4,595) |
+| Built | 2026-05-19 by Opus 4.7 + FIX3 strategy |
+| Base | Current king (d24c9d3, 4595L) |
+| Gate | Running — 100 tasks seed 42, --timeout 600, threshold ≥70% |
+| Gate tmux | `v71gate` / log: `/tmp/v71_gate_100.log` |
 
-### v49 New Features vs v41
-1. _find_test_partner_by_grep() — grep fallback test discovery (from new king)
-2. _last_assistant_named_target() — budget deferral (from new king)
-3. Enhanced build_attempt2_bootstrap() — file hints for attempt 2 (from new king)
-4. Needle-based preloading — windowed large-file truncation fix
-5. Wiring gap gate — orphan presentation file detection (king lacks this)
+### v71 Additions vs King (FIX3 strategy — Opus 4.7 debate confirmed)
+1. **Sonnet 4.6 rubric** — Root Cause 40 / Scope 30 / AC Coverage 20 / Quality 10
+2. **UPDATE WIRING RULE restored** — stripped in v68 → UPDATE WR 57%→14%. Now back.
+3. **Task-type strategy** — BUGFIX/UPDATE/FEATURE/REFACTOR/API each with specific strategy
 
+### Gate command (≥70% → ask James for approval)
+```bash
+cd /root/sn66-ninja
+tmux new-session -d -s v71gate
+tmux send-keys -t v71gate "python3 -u validator_harness_v6.py --challenger agent_cl_gpt_v71.py --king king_agent.py --tasks 100 --seed 42 --parallel 3 --timeout 600 2>&1 | tee /tmp/v71_gate_100.log" Enter
+```
 ---
 
 ## 🚨 SUBMISSION FORMAT CHANGED (2026-05-14)
