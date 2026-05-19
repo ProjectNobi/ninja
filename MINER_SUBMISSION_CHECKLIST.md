@@ -342,3 +342,19 @@ Functionally preserves UPDATE WIRING (v62b's key strength) but base is different
 **Rule learned (James directive 2026-05-19):**
 - Switching codebase = different miner version = must ask James for approval first
 - Minimum-change original file → patch only specific CI failures → same file, same base
+
+---
+
+## ProjectNobi-v66 — 2026-05-19
+
+| Hotkey | UID | SS58 | Agent | CI | Submission ID | Status |
+|--------|-----|------|-------|----|---------------|--------|
+| sn66-rsvd-4 | **76** | 5EUGf13gqFYFTGsH... | agent_cl_gpt_v66.py (v62b + 5 BUGFIX changes) | **72 ✅** | 5EUGf13gqFYFTGsH-20aacab07817ccba | **LIVE** |
+
+### v66 Checklist Results
+- Syntax: ✅ | solve(): ✅ | MAX_COMMANDS=25: ✅ | UPDATE WIRING: ✅
+- COMPLETENESS: ✅ | Never delete: ✅ absent | Size: 183K (< 5MB) ✅
+- Submitted ORIGINAL v66 — zero code changes (L-SN66-SUBMIT-ORIGINAL-1) ✅
+
+### v66 Gate (running at submission time)
+- 60.9% WR (14W/9L) at 23/50 — ABOVE 60% threshold
