@@ -84,8 +84,8 @@ JUDGE_PROMPT_OPUS = (
     "Score each patch INDEPENDENTLY on a scale of 0-100 using the rubric below.\n"
     "Do NOT compare the patches to each other \u2014 evaluate each against the issue.\n\n"
     "Issue:\n{issue}\n\n"
-    "PATCH A (challenger):\n```\n{patch_a}\n```\n\n"
-    "PATCH B (king):\n```\n{patch_b}\n```\n\n"
+    "PATCH A:\n```\n{patch_a}\n```\n\n"
+    "PATCH B:\n```\n{patch_b}\n```\n\n"
     "## SCORING RUBRIC (total: 100 points)\n\n"
     "**Root Cause Resolution (0-40 pts)**\n"
     "- 40 pts: Fixes the actual root cause (traces bug to source, not symptom); "
@@ -747,8 +747,8 @@ def llm_judge(
             "You are evaluating two code patches that attempt to fix the same "
             "programming issue.\n\n"
             f"Issue:\n{issue[:2000]}\n\n"
-            f"PATCH A (challenger):\n```\n{patch_a[:40000]}\n```\n\n"
-            f"PATCH B (king):\n```\n{patch_b[:40000]}\n```\n\n"
+            f"PATCH A:\n```\n{patch_a[:40000]}\n```\n\n"
+            f"PATCH B:\n```\n{patch_b[:40000]}\n```\n\n"
             "Score each patch INDEPENDENTLY on a scale of 0-100 based on:\n"
             "- Correctness: Does it fix the root cause of the issue?\n"
             "- Completeness: Does it address all affected files and edge cases?\n"
@@ -1061,25 +1061,36 @@ def run_task_duel(
     result["cursor_sim_king"] = compute_lcs_similarity(
         result["king_patch"], ref_patch)
 
-    # 5. LLM judge: challenger = A, king = B (FIX 2+5: independent scores, model-aware)
+    # 5. LLM judge: BLIND A/B (FIX 8: randomize A/B assignment to eliminate king-label bias)
+    # Challenger and king are randomly assigned to Patch A or Patch B each round.
+    # Scores are remapped back to challenger/king after judging.
+    import random as _random
+    _flip = _random.random() < 0.5
+    _patch_a = result["king_patch"]       if _flip else result["challenger_patch"]
+    _patch_b = result["challenger_patch"] if _flip else result["king_patch"]
+
     # FIX 7: dual-judge support — if judge_model contains '|', run both models and average
     if "|" in judge_model:
         models = [m.strip() for m in judge_model.split("|")]
-        scores_c, scores_k, reasonings = [], [], []
+        scores_a, scores_b, reasonings = [], [], []
         for m in models:
-            j = llm_judge(issue, result["challenger_patch"], result["king_patch"],
-                          api_key=api_key, model=m)
-            scores_c.append(j["score_challenger"])
-            scores_k.append(j["score_king"])
+            j = llm_judge(issue, _patch_a, _patch_b, api_key=api_key, model=m)
+            scores_a.append(j["score_challenger"])  # raw score_a
+            scores_b.append(j["score_king"])          # raw score_b
             reasonings.append(f"[{m.split('/')[-1]}]: {j['reasoning']}")
-        judge = {
-            "score_challenger": sum(scores_c) / len(scores_c),
-            "score_king":       sum(scores_k) / len(scores_k),
-            "reasoning":        " | ".join(reasonings)[:400],
-        }
+        _sa = sum(scores_a) / len(scores_a)
+        _sb = sum(scores_b) / len(scores_b)
+        _reasoning = " | ".join(reasonings)[:400]
     else:
-        judge = llm_judge(issue, result["challenger_patch"], result["king_patch"],
-                          api_key=api_key, model=judge_model)
+        _j = llm_judge(issue, _patch_a, _patch_b, api_key=api_key, model=judge_model)
+        _sa, _sb, _reasoning = _j["score_challenger"], _j["score_king"], _j["reasoning"]
+
+    # Remap scores back: if flipped, A=king B=challenger; else A=challenger B=king
+    judge = {
+        "score_challenger": _sb if _flip else _sa,
+        "score_king":       _sa if _flip else _sb,
+        "reasoning":        _reasoning,
+    }
     result["llm_score_challenger"] = judge["score_challenger"]
     result["llm_score_king"]       = judge["score_king"]
     result["llm_reasoning"]        = judge["reasoning"]
