@@ -46,3 +46,8 @@ Sync:  UP TO DATE ✅ — 113,253 records on both servers
 ```
 
 Commit: 777c346 — "fix: restore pair_id/load_done/write_rec/load_model_file removed in Gemini removal; fix gm_winner→consensus_3 bug (Opus 4.7)"
+
+## ⚠️ CRITICAL LESSON: Gemini Removal Killed 3 Utility Functions (2026-05-19)
+Gemini removal script accidentally deleted _call(), classify(), AND _call_sonnet_direct().
+All 3 caused ok=0 err=N for hours before discovery.
+Lesson: L-TASK4-FUNCTION-AUDIT-1 — always run full function audit after any task4 modification.
