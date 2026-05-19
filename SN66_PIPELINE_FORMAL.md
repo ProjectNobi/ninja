@@ -1,6 +1,103 @@
 # SN66 MINING PIPELINE — FORMAL INSTRUCTIONS
-*James directive 2026-05-18 | T68Bot standing operating procedure*
-*Last updated: 2026-05-19 — Judge mechanism update + v66 build*
+*James directive 2026-05-18 | Last updated: 2026-05-19 (king-base rule + judge mechanism)*
+*T68Bot standing operating procedure — OFFICIAL VERSION*
+
+---
+
+## 🏛️ OFFICIAL SN66 PIPELINE PROCESS (James directive 2026-05-19, FINAL)
+
+### Pre-Step: Full State Dive (MANDATORY before anything else)
+Dive deep to get full state and full picture in sn66 and recall all memories, lessons, and data runs in sn66 mining.
+Use: final unified data collector + this SN66-Pipeline-Formal file.
+Get Opus 4.7 to build the next better version — break down into small single-deliverable tasks (step by step) to avoid hallucinations.
+
+---
+
+### STEP 1 — Source Code + King + Scoring + Live Data
+
+**1a. PR/Source Check**
+Double check and update the latest PR merges in the SN66 source codes. Did any scoring, harness, or validation formula change?
+
+**1b. King Code Study**
+Double check, update, and study the current King’s ACTUAL source codes.
+Extract: SYSTEM_PROMPT, MAX_STEPS, refinement logic, task-type handling, dynamic injections.
+
+**1c. King as Baseline — MANDATORY (L-SN66-KING-BASE-MANDATORY-1)**
+> Double check, save, and use the current latest King’s source code as the **initial baseline (starting point)** to build our next better version.
+> `bash scripts/sync_king.sh && cp king_agent.py agent_cl_gpt_vNext.py`
+> This is the law — no other base is acceptable.
+
+**1d. Scoring Mechanism Validation**
+Double check and update the actual scoring/validation mechanism from the live-duel validator.
+Confirm judge model, scoring formula, win_margin. Update harness v6 if needed.
+
+**1e. Live Duel API Pull**
+Pull the API to gather all on-chain live duel data (against the current King).
+Analyse our active agents’ WR, round scores, loss patterns.
+
+**1f. Harness + Task Selection**
+Update and save the local v6 harness if needed.
+Select a diverse set of 50 tasks (similar type distribution to live duels) for the gate test.
+
+---
+
+### STEP 2 — Data Intelligence
+
+**2a. DPO Pair Analysis (Sonnet 4.6 ground truth)**
+The DPO pairs have: [issue + losing patch + winning patch + WHY judge preferred the winner].
+Dive deep to investigate these DPO pairs to KNOW from ground truth what the LLM judge(s) reward:
+- Sonnet 4.6 (current single judge) — use `sonnet_winner` + `sonnet_rationale` fields
+- GPT-5.4 (coming dual judge next week) — use `gpt54_winner` fields
+- Consensus pairs (`consensus=True`) = ground truth for dual-judge era
+
+**2b. M2.7 Gold Patch Analysis**
+In live competition, MiniMax-M2.7 generates our patches.
+In the final unified data collector, we have unified gold patches that show exactly how M2.7 generates patches.
+Dive deeper to investigate: patch size by task type, under/over-edit patterns, blind spots.
+
+---
+
+### STEP 3 — Synthesis + Debate
+Dive deeper to analyse all gathered data:
+- King’s strengths and weaknesses + patterns
+- How M2.7 generates patches
+- How the LLM judge(s) reward
+→ Build full picture for the next better miner.
+Then get a second Opus to **debate** to finalize each intel piece.
+
+---
+
+### STEP 4 — Build + Audit + Debate
+Apply all gathered intel to build the next better version.
+**Starting from king_agent.py (Step 1c — mandatory).**
+Then get a second Opus to **audit and debate** to finalize the version.
+
+---
+
+### STEP 5 — Checklist Alignment
+Make sure the latest version is strictly aligned with:
+- SN66 submission checklist (lesson by lesson)
+- CI Check requirements
+- All known forbidden patterns
+
+Save the latest version to this pipeline process file.
+
+---
+
+### STEP 6 — Gate Test → Approval → Submit
+Run the latest version on the local v6 harness against the current King (via a tmux session):
+- → 50-various-task harness first (**gate threshold: ≥60%**)
+- → Only if ≥60%: report to James and ask for explicit approval to submit
+- → If FAIL (<60%): send gate results breakdown by task type, ask James to restart pipeline
+
+---
+
+### STEP 7 — End-Goal: Dedicated Fine-Tuned LLM
+Based on the final dedicated LLM plan and the final unified data collector:
+
+> **End-Goal:** Train a dedicated fine-tuned LLM as an offline dev tool that writes better miner code to win in SN66 — for the long term.
+
+This LLM will replace expensive API gate tests with fast, near-free iterations using our own trained model (MiniMax M2.7 fine-tuned on SN66 gold + DPO data).
 
 ---
 
