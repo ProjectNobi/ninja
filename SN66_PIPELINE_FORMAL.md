@@ -39,6 +39,16 @@ Analyse our active agents’ WR, round scores, loss patterns.
 Update and save the local v6 harness if needed.
 Select a diverse set of 50 tasks (similar type distribution to live duels) for the gate test.
 
+> ⚠️ **TASK POOL ROTATION — CRITICAL INTEL (James directive 2026-05-19)**
+> Task pool rotation begins this week: **10 tasks/hour** rotated out of the live pool.
+> Oldest 10 tasks removed → uploaded to HuggingFace with king+challenger solutions, judge notes, artifacts.
+> **3 key implications:**
+> 1. **Harness must match live distribution** — sample tasks that reflect *current* live duel task types, not a fixed R2 seed. Update `--seed` and task sampling each pipeline run.
+> 2. **HuggingFace corpus** = free training data as it grows. Download weekly and add to gold runs.
+> 3. **No overfitting** — don't train/optimize against a fixed task set. Current pool is always rotating.
+>
+> **Harness update rule:** Before every gate test, check live duel task type distribution (from `dashboard.json` duel history) and ensure the 50-task sample has similar BUGFIX/UPDATE/FEATURE/API ratios to recent live duels.
+
 ---
 
 ### STEP 2 — Data Intelligence
