@@ -103,30 +103,45 @@ Deep-study `king_agent.py`. Extract:
 > Confirmed: king-base → CI 78 on first attempt. v62b/other base → CI 62 ❌ after 9 attempts.
 
 **1d — Scoring Mechanism Validation** (Opus 4.7, ~10min)
-Verify current scoring formula from harness v6.
+Verify current scoring formula from harness v6. Confirm: **single or dual LLM judges**, judge model(s), win_margin, formula.
 ```bash
-grep -n "JUDGE_MODEL\|_DIFF_JUDGE_WEIGHT\|win_margin\|cursor_sim" validator_harness_v6.py
+grep -n "JUDGE_MODEL\|JUDGE_MODEL_2\|_DIFF_JUDGE_WEIGHT\|win_margin\|cursor_sim\|dual\|consensus" validator_harness_v6.py
 ```
-Expected: JUDGE_MODEL=anthropic/claude-sonnet-4.6, win_margin=3, cursor_sim=telemetry only (no scoring weight — confirmed PR#1598).
-- Any change invalidates all previous gate results.
+- **Phase 1 (NOW):** Single judge — `anthropic/claude-sonnet-4.6`, win_margin=3, cursor_sim=telemetry only (PR#1598)
+- **Phase 2 (next week):** Dual judges — `anthropic/claude-sonnet-4.6` + `openai/gpt-5.4`, consensus wins
+- Check PR merges to confirm which phase is active before every pipeline run
+- Any change to judge model or formula **invalidates all previous gate results**
 - **Output:** `research/SCORING_FORMULA_SN66_vNEXT.md`
 
-**1e — Live Duel API Pull** (~5min)
+**1e — Live Duel API Pull** (~10min)
+Pull ALL duels against the current King. Compute actual WR + loss patterns per task type.
 ```bash
 curl -s https://ninja66.ai/dashboard.json > /tmp/dashboard_sn66.json
 python3 -c "
 import json
 with open('/tmp/dashboard_sn66.json') as f: d = json.load(f)
-our_hotkeys = ['5FecE3QZ', '5Dqabiz8']  # update as needed
+# All our active hotkeys — update each pipeline run
+our_hotkeys = ['5FecE3QZ', '5Dqabiz8', '5Dqabiz', '5FecE3']  # expand as needed
+wins, losses = 0, 0
+task_losses = {}
 for duel in d.get('duels', []):
-    if any(duel.get('challenger_hotkey','').startswith(h) for h in our_hotkeys):
-        print(duel)
+    chk = duel.get('challenger_hotkey','')
+    if any(chk.startswith(h) for h in our_hotkeys):
+        result = duel.get('result','')
+        ttype = duel.get('task_type','unknown')
+        if result == 'challenger_wins': wins += 1
+        else:
+            losses += 1
+            task_losses[ttype] = task_losses.get(ttype,0) + 1
+print(f'WR: {wins}/{wins+losses} ({100*wins//max(1,wins+losses)}%)')
+print('Losses by task type:', sorted(task_losses.items(), key=lambda x: -x[1]))
 "
 ```
-Analyze: our active agents' WR, round scores, loss patterns by task type.
+Analyze: WR vs current king, which task types we lose most, round score patterns.
 - **Output:** `research/LIVE_DUEL_STATE_SN66_vNEXT.md`
 
 **1f — Harness + Task Selection** (~10min)
+Update harness v6 if needed (after any PR merge). Select **100 diverse tasks** matching live duel distribution.
 
 > ⚠️ **TASK POOL ROTATION — CRITICAL (James directive 2026-05-19)**
 > Task pool rotates at 10 tasks/hour starting this week.
@@ -134,15 +149,17 @@ Analyze: our active agents' WR, round scores, loss patterns by task type.
 >
 > **3 key rules:**
 > 1. Before every gate test, check live duel task type distribution from `dashboard.json` duel history.
-> 2. Ensure 50-task gate sample matches current BUGFIX/UPDATE/FEATURE/API ratios in live duels.
+> 2. Ensure **100-task** gate sample matches current BUGFIX/UPDATE/FEATURE/API ratios in live duels.
 > 3. HuggingFace corpus (oldest 10 tasks/hour uploaded) = free training data — download weekly.
 
 ```bash
-# Check current task type distribution
+# Check current task type distribution in 100-task pool
 python3 validator_harness_v6.py --list-tasks 100 --seed 42
 
-# Suggested: use varied seeds each pipeline run to avoid overfitting
+# Use varied seeds each pipeline run to avoid overfitting
 # e.g. seed 42, 137, 271 in rotation
+# Gate command (always 100 tasks, always --timeout 600):
+# python3 -u validator_harness_v6.py --challenger agent_vNext.py --king king_agent.py --tasks 100 --seed 42 --parallel 3 --timeout 600
 ```
 - **Output:** `research/GATE_TASKS_SN66_vNEXT.txt`
 
@@ -486,10 +503,14 @@ with open('training_data/full_matrix_dpo_pairs.jsonl') as f:
 
 #### FT-3: Judge Simulator SFT
 
-**Data:** `judge_training_sft.jsonl` — 204,292 records
-**Filter:** `consensus=True` — 176,587 pairs (86.4%)
+**Data:** `judge_training_sft.jsonl` — **>176K consensus pairs** (204,292 total, 86.4% consensus)
+**Filter:** `consensus=True` — 176,587 pairs
 **Format:** `(task, patch_A, patch_B) → (score_A, score_B, winner, rationale)` — SFT
-**Training objective:** Teach M2.7 to score patches like Sonnet 4.6
+**Training objective:** Teach M2.7 to score patches like:
+- **Phase 1 (single judge):** `sonnet_winner` / `sonnet_rationale` fields → score like Sonnet 4.6 alone
+- **Phase 2 (dual judges):** `consensus=True` pairs where BOTH Sonnet 4.6 AND GPT-5.4 agree → score like the dual-judge consensus mechanism
+
+> When Phase 2 launches: re-train FT-3 using only `consensus=True AND sonnet_winner==gpt54_winner` pairs (highest-quality signal — both judges agree)
 
 ```python
 judge_training = []
