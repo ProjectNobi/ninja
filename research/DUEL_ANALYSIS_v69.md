@@ -63,3 +63,32 @@ Primary failure modes in fixed pool: large FEATURE_BUILD + Dart/Flutter tasks
 2. **Fix under-editing** — completeness check before finalizing, multi-file expansion
 3. **Dart/Flutter rules** — adopt king's specific Dart/Flutter patterns (line 2963+)
 4. **UPDATE task improvement** — gate test shows only 14% WR on UPDATE
+
+---
+
+## Harness Lesson: Blind Judge (FIX 8) — 2026-05-19
+
+### Discovery
+Discord miner reported: "When they tell the model judge king, the model always judge preference to king"
+
+### Root Cause Confirmed
+Our v6 harness (and likely the live validator) was labeling patches as:
+- `"PATCH A (challenger)"` — explicit identity revealed
+- `"PATCH B (king)"` — explicit authority signal to judge
+
+LLM judges exhibit label bias: "king" carries implicit authority/correctness → judge favors it.
+Challenger is ALWAYS Patch A (positional bias too).
+
+### Fix Applied (FIX 8 in validator_harness_v6.py)
+1. Removed labels: `"PATCH A"` and `"PATCH B"` only — no identity revealed
+2. Randomized A/B assignment (50/50 per round) — challenger could be A or B
+3. Scores correctly remapped back to challenger/king after judging
+4. Both judge prompts fixed: Sonnet 4.6 + DeepSeek fallback
+
+### Implication for Our Scores
+If the live validator has the same bias, our true WR may be HIGHER than reported.
+The fix means our local gate is now more accurate/fair.
+SN66 team is implementing same fix — watch for validator PR.
+
+### Lesson ID: L-SN66-BLIND-JUDGE-1
+**Rule: Always use blind A/B judging without king/challenger identity labels.**

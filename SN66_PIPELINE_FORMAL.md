@@ -953,3 +953,32 @@ Follow same submission checklist + James approval process.
 ### Stage 2 End-Goal
 > **Train a true winning dedicated LLM as an offline dev tool that writes better miner code to win in SN66 — for the long term.**
 > Near-unlimited iterations at near-$0. Self-improving flywheel. Dominate SN66 permanently.
+
+
+---
+
+## ⚖️ HARNESS RULE: BLIND JUDGE (L-SN66-BLIND-JUDGE-1) — James directive 2026-05-19
+**ALWAYS use blind A/B judging — never reveal king/challenger identity to the judge model.**
+
+### Why
+LLM judges exhibit label bias: the label "king" carries implicit authority → judge scores it higher.
+Confirmed from SN66 Discord (miner report) + verified in our harness code.
+
+### Fixed in validator_harness_v6.py (FIX 8, commit 81289db)
+- ❌ OLD: `"PATCH A (challenger)"` and `"PATCH B (king)"` — identity revealed
+- ✅ NEW: `"PATCH A"` and `"PATCH B"` only — no identity
+- ✅ A/B assignment randomized 50/50 per round — no positional bias
+- ✅ Scores remapped back to challenger/king after judging
+
+### Gate Command (always use harness with FIX 8+)
+```bash
+python3 -u validator_harness_v6.py --challenger AGENT.py --king king_agent.py \
+  --tasks 100 --seed 42 --parallel 3 --timeout 600
+```
+
+### Implication
+If the live validator has the same bias (likely), our true WR > reported WR.
+Monitor unarbos/ninja PRs for their fix — align harness accordingly.
+
+**Lesson: L-SN66-BLIND-JUDGE-1**
+
