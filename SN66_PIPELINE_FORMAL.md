@@ -376,7 +376,7 @@ python3 -c "import agent_cl_gpt_vNEXT; print('syntax OK')"
 ```bash
 # ALWAYS in tmux
 tmux new-session -d -s sn66_vnext_gate50
-tmux send-keys -t sn66_vnext_gate50 "cd /root/sn66-ninja && python3 validator_harness_v6.py --challenger agent_cl_gpt_vNEXT.py --king king_agent.py --tasks 50 --seed 42 --parallel 3 --timeout 300 > /tmp/vnext_gate_50.log 2>&1" Enter
+tmux send-keys -t sn66_vnext_gate50 "cd /root/sn66-ninja && python3 validator_harness_v6.py --challenger agent_cl_gpt_vNEXT.py --king king_agent.py --tasks 50 --seed 42 --parallel 3 --timeout 600 > /tmp/vnext_gate_50.log 2>&1" Enter
 
 # Monitor
 tmux attach -t sn66_vnext_gate50
@@ -492,7 +492,7 @@ Threshold: ≥60% decisive WR. Always in tmux.
 ```bash
 tmux new-session -d -s sn66_stage2_gate
 python3 validator_harness_v6.py --challenger agent_vNEXT.py --king king_agent.py \
-  --tasks 50 --seed 42 --model t68-sn66-m27 --parallel 5 --timeout 300
+  --tasks 50 --seed 42 --model t68-sn66-m27 --parallel 5 --timeout 600
 ```
 
 ---
