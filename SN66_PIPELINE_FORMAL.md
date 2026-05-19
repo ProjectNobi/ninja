@@ -856,3 +856,77 @@ wc -l king_agent.py  # Confirm king is updated
 THEN: `cp king_agent.py agent_cl_gpt_vNext.py`
 
 **This is the law for all future SN66 pipeline runs.**
+
+---
+
+## 🚀 STAGE 2 — DEDICATED FINE-TUNED LLM PIPELINE (James directive 2026-05-19)
+
+*Activates when: T68-S1 + T68-S2 NVLink bridge set up (242GB unified RAM) + dedicated M2.7 fine-tuned on SN66 data*
+
+### When Stage 2 Triggers
+- T68-S2 DGX Spark arrives and NVLink bridge configured (NVIDIA playbook: connect-two-sparks)
+- All gold + DPO data collection complete (target: 9,122 tasks × all models)
+- Stage 1 has produced ≥3 submitted versions with live duel results
+- QLoRA fine-tune of MiniMax M2.7 on SN66 gold (364K+) + DPO data (30K+) complete
+
+---
+
+### The Three Roles of the Dedicated Fine-Tuned M2.7
+
+| Role | What It Does | Replaces |
+|------|-------------|---------|
+| 🛠️ **Patch Generator** | Generates winning patches natively for any SN66 task. Trained on 364K+ gold examples from 20+ models. Knows exactly what Sonnet 4.6 + GPT-5.4 rewards. | External API calls (~$0.30/task) |
+| ⚖️ **Judge Simulator** | Predicts judge decision for any patch pair (ours vs king). Trained on 86K+ DPO pairs with full judge rationale. Returns predicted winner + confidence. | Real judge calls (~$0.10/duel) |
+| 🔬 **Offline Dev Tool** | Powers rapid iteration: Opus 4.7 writes improved SYSTEM_PROMPT → M2.7 generates patches → M2.7 simulates judge → score instantly. Full build-test cycle at near-$0. | 50-task gate test (~$15-30/run) |
+
+**Net result:** 50-100 build-test cycles per day vs 1-2 today. Self-improving flywheel.
+
+---
+
+### Stage 2 Pipeline Steps
+
+**Step 0 (same as Stage 1):** Sync latest king → `cp king_agent.py agent_vNext.py`
+
+**Step 1 — DPO-Informed SYSTEM_PROMPT Design:**
+Use dedicated M2.7 (judge simulator mode) to predict which SYSTEM_PROMPT additions improve WR.
+No API costs. Fast iteration. Dozens of candidate prompts tested in minutes.
+
+**Step 2 — Patch Generation:**
+Use dedicated M2.7 (patch generator mode) to generate patches for the 50-task gate set.
+Score each candidate vs king using judge simulator. Pick best SYSTEM_PROMPT.
+
+**Step 3 — Gate Confirmation:**
+Run top candidate on real harness v6 (50 tasks, real Sonnet 4.6 judge) to confirm.
+This is now a verification step, not a discovery step.
+
+**Step 4 — Submit if ≥60%:**
+Follow same submission checklist + James approval process.
+
+---
+
+### Training Data (collected by Final Unified Collector, running 24/7)
+
+| Dataset | Location | Records | Trains Role |
+|---------|----------|---------|-------------|
+| Unified gold patches | training_unified_gold.jsonl | 364K+ | Role 1 — SFT phase |
+| DPO full matrix | full_matrix_dpo_pairs.jsonl | 61K+ | Roles 1+2 — DPO phase |
+| UPDATE task DPO | update_task_dpo_pairs.jsonl | 62K+ | Role 1 — UPDATE specialization |
+| Reference DPO | reference_dpo_pairs.jsonl | 9K+ | Role 2 — ground truth |
+| Live duel DPO (daily) | dpo/YYYY-MM-DD.jsonl | growing | Role 2 — live judge signals |
+| **Consensus pairs** (`consensus=True`) | all DPO files | subset | Role 2 — dual-judge era (Phase 2) |
+
+---
+
+### Fine-Tune Plan (when T68-S2 arrives)
+1. T68-S2 arrives → set up NVLink bridge (NVIDIA playbook)
+2. QLoRA fine-tune M2.7 NVFP4 on SN66 gold (364K+) + DPO data via SGLang TP=2
+3. Deploy fine-tuned M2.7 via LiteLLM proxy (port 4000)
+4. Validate: Run 50-task gate, compare M2.7 predicted WR vs real Sonnet 4.6 WR
+5. If validator accurate: switch to Stage 2 pipeline (M2.7 as offline dev tool)
+6. Keep Stage 1 pipeline as fallback if M2.7 judge simulation unreliable
+
+---
+
+### Stage 2 End-Goal
+> **Train a true winning dedicated LLM as an offline dev tool that writes better miner code to win in SN66 — for the long term.**
+> Near-unlimited iterations at near-$0. Self-improving flywheel. Dominate SN66 permanently.
