@@ -325,3 +325,20 @@ King-base + minimal addition → CI 78. Always start from current king for CI su
 Functionally preserves UPDATE WIRING (v62b's key strength) but base is different from original. Live and dueling.
 
 **Next v62b refresh**: submit agent_cl_gpt_v62_fix.py → read CI flags → patch minimum → resubmit same file.
+
+---
+
+## ProjectNobi-v62b-re — 2026-05-19 (James-approved re-submission with corrected name)
+
+| Hotkey | UID | SS58 | Agent | CI | Submission ID | Status |
+|--------|-----|------|-------|----|---------------|--------|
+| sn66-rsvd-3 | **78** | 5DqUvn7tzjvJXUmt... | v62ci (king d24c9d3 + UPDATE WIRING) | **78 ✅** | 5DqUvn7tzjvJXUmt-e1a9728ff6f98ae0 | **LIVE** |
+
+**Naming clarification:**
+- UID 136 (sn66-pnobi-v62b) = original v62b (v62_fix, CI 74) — dueled, lost net +3
+- UID 255 (sn66-rsvd-2) = "ProjectNobi-v62b" — wrong name, v62ci base, still live
+- UID 78 (sn66-rsvd-3) = **"ProjectNobi-v62b-re"** — correct name, v62ci base, LIVE ✅
+
+**Rule learned (James directive 2026-05-19):**
+- Switching codebase = different miner version = must ask James for approval first
+- Minimum-change original file → patch only specific CI failures → same file, same base
