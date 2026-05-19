@@ -485,3 +485,39 @@ Restore all king guard rails before submitting (see Pre-Submission Fix Checklist
 3. Apply pre-submission fix checklist (4 items in MINER_SUBMISSION_CHECKLIST.md)
 4. Submit with `--agent-username ProjectNobi-vXX`
 5. Verify acceptance via API (not console)
+
+---
+
+## ProjectNobi-v62b Submission — 2026-05-19
+
+### Hotkey Details
+| Field | Value |
+|-------|-------|
+| Hotkey name | sn66-rsvd-2 |
+| UID | 255 |
+| SS58 | 5E9zKVRpZCreZmzBYVawHwznLssPasyVu9DJyEP3gw1nFtaS |
+| Agent username | **ProjectNobi-v62b** |
+| Submission ID | 5E9zKVRpZCreZmzB-e1a9728ff6f98ae0 |
+| CI Score | **78/100 ✅ PASSED** |
+| File | agent_cl_gpt_v62ci.py (king d24c9d3 + UPDATE WIRING only) |
+| Status | LIVE — queued for duel |
+
+### What v62b Is
+- Base: current king_agent.py (commit d24c9d3, 4595L)
+- Addition: UPDATE TASK WIRING RULE (functional connectivity for UPDATE/ENHANCE tasks)
+- **One surgical change = CI 78** (proven approach per L-SN66-CI-VBASE-MATTERS-1)
+
+### Previous v62b Duel (UID 136)
+- Result: 26W/23L — net +3, **1 round short of dethroning** (win_margin=3 requires strictly >+3)
+- James note: validator margin rule prevented win despite strong performance
+
+### CI Lesson Reinforced
+- agent_cl_gpt_v62_fix.py (v62+4fixes): CI 62 ❌ — king changed, too much divergence now
+- agent_cl_gpt_v62ci.py (king+WIRING): CI 78 ✅ — minimum change = highest CI
+- Rule: L-SN66-CI-VBASE-MATTERS-1 always applies on fresh king
+
+### Spent Hotkeys (2026-05-19)
+| Hotkey | UID | CI | Outcome |
+|--------|-----|----|---------|
+| sn66-rsvd-1 | 157 | 62 ❌ | v62_fix submitted — rejected, hotkey spent |
+| sn66-rsvd-2 | 255 | 78 ✅ | v62ci as ProjectNobi-v62b — LIVE |

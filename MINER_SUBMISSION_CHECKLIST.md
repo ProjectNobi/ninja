@@ -286,3 +286,16 @@ python3 scripts/submit_private_submission.py \
 ```
 **Naming convention:** `ProjectNobi-v{version}` — matches our brand identity on the dashboard.
 **Note:** Cannot be changed after submission — hotkey is spent. Name is permanent.
+
+---
+
+## ProjectNobi-v62b — 2026-05-19
+
+| Hotkey | UID | SS58 | Version | CI Score | Submission ID | Status |
+|--------|-----|------|---------|----------|---------------|--------|
+| sn66-rsvd-1 | 157 | 5DPpRibns... | v62_fix (REJECTED — king diverged) | 62 ❌ | 5DPpRibnssdURJt5-270cb163a1a11b80 | SPENT/REJECTED |
+| sn66-rsvd-2 | 255 | 5E9zKVRpZ... | v62ci (king d24c9d3 + UPDATE WIRING) | **78 ✅** | 5E9zKVRpZCreZmzB-e1a9728ff6f98ae0 | **LIVE** |
+
+### Key Lesson 2026-05-19
+**L-SN66-CI-VBASE-MATTERS-1 CONFIRMED AGAIN:** v62_fix diverges from current king → CI 62.
+King-base + minimal addition → CI 78. Always start from current king for CI submissions.
