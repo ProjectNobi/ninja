@@ -876,3 +876,44 @@ Without the COMPLETENESS ASYMMETRY counterbalance, this kills REFACTOR.
 *Consolidated from DATA_INTEL_PIPELINE_SN66.md + SN66_PIPELINE_FORMAL.md*
 *By: T68Bot Opus 4.7 subagent | 2026-05-19*
 *Previous files preserved for historical reference.*
+
+---
+
+## SN66 Judge Evaluation Intel — 2026-05-19 (SN66 team)
+
+> "Gemini 3.5 Flash doesn't seem very good, only 80% agreeance rate with gpt 5.4 and claude.
+> im gonna try kimi, claude is getting kind of expensive
+> it tends to output more tokens than gpt"
+
+### Implications for T68
+
+**Gemini 3.5 Flash as judge: DOWNGRADED**
+- Only 80% agreement rate with GPT-5.4 + Sonnet dual consensus
+- Outputs more tokens than GPT-5.4 → slower + higher cost per judge call
+- Status: keep as labeler in task4 (useful data), but NOT primary judge candidate
+- Phase 3 candidate: demoted
+
+**Kimi-K2.5 as judge: UPGRADED — NOW PRIMARY CANDIDATE**
+- SN66 team is actively testing Kimi as judge (confirmed by team)
+- Our Kimi-K2.5 labeler in task4_matrix was the RIGHT call (today, 2026-05-19)
+- `kimi25_winner` field in all DPO pairs = immediate training signal when Kimi becomes live judge
+- Training target update: `kimi25_winner == sonnet_winner` consensus = highest value subset
+
+**Claude (Sonnet) direct API: VALIDATED**
+- Team confirms Claude getting expensive via OR → direct API (which we just wired today) = correct move
+- Our `_call_sonnet_direct()` saves OR markup on every judge call
+
+### Updated Judge Priority
+| Phase | Judges | Status |
+|-------|--------|--------|
+| Phase 1 (NOW) | Sonnet 4.6 only | ✅ Live |
+| Phase 2 (next week) | Sonnet 4.6 + Kimi-K2.5 | 🎯 HIGH PROBABILITY |
+| Phase 3 (future) | TBD | Gemini 3.5 Flash: UNLIKELY |
+
+**Training filter priority (updated):**
+1. `consensus_4=True` (all 4 agree) — diamond quality
+2. `sonnet_winner == kimi25_winner` — Phase 2 target pairs
+3. `consensus=True` (sonnet + gpt54) — current ground truth
+4. `gemini35_winner` — deprioritized (lower agreement rate)
+
+**Lesson saved: L-SN66-JUDGE-GEMINI-DOWNGRADE-1**
