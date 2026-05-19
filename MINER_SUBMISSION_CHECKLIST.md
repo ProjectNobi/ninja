@@ -462,3 +462,24 @@ The "two-track" system (v62b for research, king for submission) written above is
 
 No exceptions. No v62b base. No "research track" with v62b.
 King → add improvements → gate test → submit.
+
+---
+
+## ProjectNobi-v68 — 2026-05-19
+
+| Hotkey | UID | SS58 | Agent | CI | Submission ID | Status |
+|--------|-----|------|-------|----|---------------|--------|
+| sn66-rsvd-5 (REUSED ✅) | **162** | 5H6XpZC4v8cZmxwn... | agent_cl_gpt_v68.py (king + 2 additions) | **78 ✅** | 5H6XpZC4v8cZmxwn-a7850f8b09cdaaa6 | **LIVE** |
+
+### v68 = king d24c9d3 + 2 targeted additions:
+1. Import guard: "any newly added import must already exist in the codebase"
+2. FEATURE/UPDATE deliverables checklist: enumerate all required deliverables before coding
+
+### Gate test (running): tmux sn66_v68_gate50 | /tmp/v68_gate_50.log
+- Targeting FEATURE (was 40% in v67) and compile error prevention
+- Expected: FEATURE 40% → 55%+, Overall 55.8% → 60%+
+
+### Reused hotkey: sn66-rsvd-5 (UID 162)
+Previous attempt: CI 62 (rejected) on agent_cl_gpt_v67.py (v62b base)
+This attempt: CI 78 (passed) on agent_cl_gpt_v68.py (king base) ✅
+Confirmed: L-SN66-CI-HOTKEY-SPENT-1 = CI fail means hotkey REUSABLE
