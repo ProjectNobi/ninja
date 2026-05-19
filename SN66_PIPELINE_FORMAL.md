@@ -521,3 +521,103 @@ Restore all king guard rails before submitting (see Pre-Submission Fix Checklist
 |--------|-----|----|---------|
 | sn66-rsvd-1 | 157 | 62 ❌ | v62_fix submitted — rejected, hotkey spent |
 | sn66-rsvd-2 | 255 | 78 ✅ | v62ci as ProjectNobi-v62b — LIVE |
+
+---
+
+## v65 Gate Failure Analysis (2026-05-19)
+
+### Final Gate Result: FAIL ❌
+- WR: 37.5% decisive (15W/25L/1T) — 50 tasks, seed 42
+- Threshold: ≥60% required
+
+### Breakdown by Task Type
+| Type | WR | W/L | Status |
+|------|-----|-----|--------|
+| BUGFIX | **12%** | 2W/14L | 🔴 Root cause of failure |
+| FEATURE | 45% | 5W/6L | ⚠️ Below par |
+| UPDATE | 60% | 3W/2L | ✅ UPDATE WIRING working |
+| REFACTOR | 100% | 1W/0L | ✅ |
+
+### Root Cause
+- v62 base underperforms vs king on BUGFIX under LLM-only scoring (Claude Sonnet 4.6)
+- BUGFIX = 73% of today's live competition tasks
+- The 5 micro-changes (hail-mary, anti-churn, correctness, security, error handling) did NOT fix BUGFIX
+
+### James directive (2026-05-19)
+Restart pipeline with **v62b (agent_cl_gpt_v62_fix.py) as baseline**. BUGFIX is the primary target.
+
+
+---
+
+## SN66 Validator Roadmap Intel (James directive 2026-05-19)
+
+### Phase 1 — NOW (live since PR#1598, 2026-05-19)
+- Single LLM judge: `anthropic/claude-sonnet-4.6`
+- Scoring: 100% LLM-only
+- Training target: `sonnet_winner` field in DPO pairs
+
+### Phase 2 — NEXT WEEK (upgrade coming)
+- Dual LLM judges: `anthropic/claude-sonnet-4.6` + `openai/gpt-5.4`
+- Scoring: consensus of both judges
+- Training target: `consensus=True` DPO pairs (both judges agree)
+- **Our advantage:** dual-judge DPO data already collected with both fields
+
+### Data Assets (already ready for Phase 2)
+| Field | Use |
+|-------|-----|
+| `sonnet_winner` | Ground truth for Phase 1 |
+| `gpt54_winner` | Ground truth for old scoring |
+| `consensus=True` | **Ground truth for Phase 2** — win both judges |
+| `sonnet_rationale` | What Sonnet rewards (Phase 1+2) |
+| `judge_rationale` | What GPT-5.4 rewards (Phase 2) |
+
+### Strategy
+- v66 targets Sonnet 4.6 (Phase 1) — gate test running now
+- When Phase 2 arrives: focus on `consensus` pairs — agents must satisfy BOTH judges
+- Pre-train on consensus pairs NOW to be ready before Phase 2 launch
+
+---
+
+## v66 — Built 2026-05-19 (James approved — v62b baseline, BUGFIX focus)
+
+### Description
+**agent_cl_gpt_v66.py** (4,658 lines, +14 vs v62b) — v62b base + 5 BUGFIX-targeted surgical additions
+
+Built from: agent_cl_gpt_v62_fix.py (original v62b, 4,644L) — per James directive
+
+### Why v66 (motivation)
+- v65 gate failed: 37.5% WR — BUGFIX 12% (2W/14L), catastrophic
+- New judge: Claude Sonnet 4.6 (LLM-only scoring since PR#1598 2026-05-19)
+- BUGFIX = 73% of live competition tasks
+- Root cause: v62b lacked BUGFIX-specific root-cause tracing guidance
+
+### 5 Changes Applied (minimum surgical, v62b base intact)
+| # | Change | Location | Purpose |
+|---|--------|----------|---------|
+| 1 | BUGFIX SCOPE RULE — root-cause owner framing | After THOROUGHNESS section | Fix symptom-spraying pattern |
+| 2 | ROOT CAUSE examples + anti-patterns (cache, CLI, delegation wrapper, result masking) | After existing parser example ~line 3033 | Concrete examples stop M2.7 from abstracting |
+| 3 | Strategy line task-type branching | Plan template ~line 2996 | BUG FIX = smallest root-cause, UPDATE/FEATURE = complete wiring |
+| 4 | Caller contract + error type sentences | ROOT CAUSE RULE section ~line 3041 | 80% of BUGFIX rejections = incomplete cascade fix |
+| 5 | Sonnet 4.6 tie-break signal | SCOPE DISCIPLINE section ~line 3131 | Architectural fitness wins 17.5% of Sonnet disagreements |
+
+### Preserved (untouched from v62b)
+- UPDATE TASK WIRING RULE ✅
+- COMPLETENESS BEATS MINIMALISM ✅
+- Under-editing asymmetry ✅
+- "Never delete" pattern: absent ✅
+
+### Gate Test
+- Running: 50 tasks, seed 42, parallel 3, timeout 300s
+- Judge: claude-sonnet-4.6 (matches live validator)
+- Log: /tmp/v66_gate_50.log | tmux: sn66_v66_gate50
+- Threshold: ≥60% decisive WR → report to James → submit
+- Expected: BUGFIX 12% → 35-40%, Overall 37.5% → 48-53%
+
+### Validator Phase Intel (2026-05-19)
+- Phase 1 (NOW): Single judge claude-sonnet-4.6, LLM-only scoring
+- Phase 2 (next week): Dual judges sonnet-4.6 + gpt-5.4 → use consensus=True DPO pairs
+
+### Files
+- Agent: /root/sn66-ninja/agent_cl_gpt_v66.py
+- Research: research/ROOT_CAUSE_SN66_v66.md, research/DEBATE_ROOT_CAUSE_SN66_v66.md
+- King ref: /root/sn66-ninja/king_agent.py (d24c9d3)
