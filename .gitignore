@@ -27,3 +27,12 @@ logs/
 
 # OS/editor cruft
 .DS_Store
+
+# Training data — never commit these
+training_data/
+*.jsonl
+*.jsonl.gz
+*.bak
+*.bak.*
+.king_sha
+king_agent.py.bak*
