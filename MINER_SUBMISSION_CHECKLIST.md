@@ -358,3 +358,22 @@ Functionally preserves UPDATE WIRING (v62b's key strength) but base is different
 
 ### v66 Gate (running at submission time)
 - 60.9% WR (14W/9L) at 23/50 — ABOVE 60% threshold
+
+---
+
+## ProjectNobi-v67 — 2026-05-19
+
+| Hotkey | UID | SS58 | Agent | CI | Submission ID | Status |
+|--------|-----|------|-------|----|---------------|--------|
+| sn66-rsvd-5 | 162 | 5H6XpZC4v8cZmxwn... | agent_cl_gpt_v67.py (v62b base) | **62 ❌** | 5H6XpZC4v8cZmxwn-cca35... | REJECTED — hotkey spent |
+| sn66-rsvd-6 | **235** | 5HDwP4eE5xsVg3U5... | agent_cl_gpt_v67ci.py (king + WIRING + 4 v67 additions) | **72 ✅** | 5HDwP4eE5xsVg3U5-2730a7... | **LIVE** |
+
+### v67 = king d24c9d3 + UPDATE TASK WIRING + 4 Sonnet-specific additions:
+1. Anti-phantom dependency rule
+2. Completeness commitment (complete smaller fix > incomplete larger fix)
+3. Wrong-file guard (fix owning function, not callers)
+4. AC verification nudge (verify each requirement by name)
+
+### L-SN66-CI-VBASE-MATTERS-1 CONFIRMED AGAIN
+v62b base → CI 62 (diverges too much from current king)
+King base + minimum additions → CI 72 ✅
