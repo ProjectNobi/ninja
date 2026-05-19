@@ -197,9 +197,7 @@ If any file is empty or missing → STOP and investigate before proceeding.
 
 #### PRE-STEP: King Sync (MANDATORY before every pipeline run)
 ```bash
-cd /root/sn66-ninja && git fetch --all
-git show <latest-commit>:agent.py > king_agent.py
-wc -l king_agent.py   # Verify line count changed
+cd /root/sn66-ninja && bash scripts/sync_king.sh && wc -l king_agent.py
 ```
 Check: `curl -s https://ninja66.ai/dashboard.json | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['current_king']['commit_sha'][:16])"`
 
@@ -227,7 +225,7 @@ Check: `curl -s https://ninja66.ai/dashboard.json | python3 -c "import json,sys;
 ---
 
 #### STEP 1c — Scoring Mechanism Validation (Opus 4.7, ~10min)
-**Task:** Verify current scoring formula from live harness. Confirm judge model = gpt-5.4, win_margin=3, scoring = 0.5×cursor_sim + 0.5×llm_judge.
+**Task:** Verify current scoring formula from live harness. Confirm judge model = anthropic/claude-sonnet-4.6, win_margin=3, scoring = 100% LLM judge (cursor_sim telemetry only, no scoring weight). [Updated 2026-05-19: PR#1598]
 **Input:** `/root/sn66-ninja/validator_harness_v6.py` (search for JUDGE_MODEL, _DIFF_JUDGE_WEIGHT, win_margin)
 **Output:** `research/SCORING_FORMULA_SN66_vNEXT.md`
 **Critical:** Any change here invalidates all previous gate results.
@@ -266,13 +264,14 @@ python3 validator_harness_v6.py --list-tasks 100 --seed 42
 - 100 FEATURE pairs from `full_matrix_dpo_pairs.jsonl`  
 - 100 BUGFIX pairs from `full_matrix_dpo_pairs.jsonl`
 
-**For each type, extract:** What does gpt-5.4 reward vs penalize? Give 5 concrete examples per task type.
+**For each type, extract:** What does the LLM judge reward vs penalize? Use `sonnet_winner` + `sonnet_rationale` fields (Phase 1 ground truth — Sonnet 4.6 is current single judge). For Phase 2 readiness also note `consensus=True` pairs. Give 5 concrete examples per task type.
 
 **Key questions to answer:**
 - For UPDATE: does judge care more about completeness or surgical precision?
 - For FEATURE: does judge reward end-to-end wiring or targeted implementation?
 - For BUGFIX: does judge care about addressing root cause or fixing symptoms?
-- What specific phrases/patterns appear in chosen (winning) rationale but not rejected?
+- What specific phrases/patterns appear in `sonnet_rationale` for winning patches but not losing?
+- For Phase 2 prep: where do `sonnet_winner` and `gpt54_winner` diverge? What do `consensus=True` pairs share?
 
 **Input:** First 300 lines of `training_data/update_task_dpo_pairs.jsonl` + first 200 lines of `training_data/full_matrix_dpo_pairs.jsonl`
 **Output:** `research/DPO_INTEL_SN66_vNEXT.md`
@@ -315,10 +314,10 @@ python3 validator_harness_v6.py --list-tasks 100 --seed 42
 ---
 
 #### STEP 4 — Build Next Version (Opus 4.7, ~30min)
-**Task:** Read ROOT_CAUSE + DEBATE + king_agent.py + agent_cl_gpt_v54.py → build next version.
+**Task:** Read ROOT_CAUSE + DEBATE + king_agent.py → build next version.
 
 **Mandatory rules for the build:**
-- Start from v54 as base (best at 52.1%)
+- Start from king_agent.py as base (L-SN66-KING-BASE-MANDATORY-1 CORRECTION)
 - Match king's budget: MAX_STEPS=50, MAX_COMMANDS_PER_RESPONSE=25
 - Add multi-shot refinement if it doesn't regress UPDATE performance
 - Apply language-specific completeness rules from king
@@ -327,7 +326,7 @@ python3 validator_harness_v6.py --list-tasks 100 --seed 42
 - NEVER add: "never delete or remove existing functions/components" pattern
 - NEVER remove the COMPLETENESS asymmetry statement
 
-**Input:** `research/ROOT_CAUSE_SN66_vNEXT.md` + `research/DEBATE_ROOT_CAUSE_SN66_vNEXT.md` + king_agent.py + agent_cl_gpt_v54.py
+**Input:** `research/ROOT_CAUSE_SN66_vNEXT.md` + `research/DEBATE_ROOT_CAUSE_SN66_vNEXT.md` + king_agent.py
 **Output:** `agent_cl_gpt_vNEXT.py` (named with actual version number)
 
 **Audit (second Opus):** Audit the new version for:
@@ -587,7 +586,9 @@ Confirmed: syntax OK, 50 steps, all king guards intact.
 
 ## 🏆 OFFICIAL BASELINE — v62 (James directive 2026-05-18)
 
-**v62 is the current T68 SN66 baseline for all miners.**
+> ⚠️ **SUPERSEDED by L-SN66-KING-BASE-MANDATORY-1 CORRECTION (2026-05-19)** — v62 is historical reference only. All new versions start from current `king_agent.py`. Do **NOT** use v62 as base for any new build, gate test, or submission. See pipeline header above.
+
+**v62 is the current T68 SN66 baseline for all miners.** *(Historical record — see superseded notice above)*
 
 | File | Description | CI Score | Gate WR |
 |------|-------------|----------|---------|
@@ -697,6 +698,8 @@ Restore all king guard rails before submitting (see Pre-Submission Fix Checklist
 
 ### James directive (2026-05-19)
 Restart pipeline with **v62b (agent_cl_gpt_v62_fix.py) as baseline**. BUGFIX is the primary target.
+
+> ⚠️ **Note:** This directive was superseded the same day by L-SN66-KING-BASE-MANDATORY-1 CORRECTION (2026-05-19). v62b base approach applies to v66 (built per this directive) but all versions v67+ must use current king_agent.py as base.
 
 
 ---
