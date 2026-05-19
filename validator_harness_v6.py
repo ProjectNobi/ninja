@@ -1,48 +1,49 @@
 #!/usr/bin/env python3
 """
-HARNESS v6 UPDATE 2026-05-15:
-  - JUDGE_MODEL: openai/gpt-5.4 (CONFIRMED: same as live SN66 validator _DIFF_JUDGE_MODEL)
+validator_harness_v6.py — SN66 Ninja Local Duel Harness v6  (R2 Synthetic Repos)
+
+HARNESS v6 UPDATE 2026-05-19:
+  - JUDGE_MODEL: anthropic/claude-sonnet-4.6 via OpenRouter (PR#1598 — LLM-only scoring)
+  - Scoring: LLM-only (cursor_sim is telemetry; does NOT affect winner)
   - Submission flow: direct API POST to ninja66.ai/api/submissions (no on-chain commit)
   - Submit: ./scripts/submit_private_submission.py --wallet-name T68Coldkey --wallet-hotkey HK --agent agent.py
   - Test with claude judge: python3 validator_harness_v6.py --challenger agent.py --judge-model anthropic/claude-opus-4-6
 
-
-2026-05-15 UPDATES:
-validator_harness_v5.py — SN66 Ninja Local Duel Harness v5  (R2 Synthetic Repos)
-
-Changes from v4:
+Changes from v5:
   - FIX 1: AGENT_TIMEOUT raised 120→300s (default); --timeout CLI flag added
   - FIX 2: LLM judge now scores independently (0-100 each) matching live validator behavior
   - FIX 3: King staleness warning + live king info at startup
   - FIX 4: Version header
   - FIX 5: --judge-model CLI flag; JUDGE_PROMPT_OPUS for claude-opus-4.7 judge
+  - FIX 6: challenger-specific API key/base support
+  - FIX 7: dual-judge support (model1|model2 syntax)
+  - FIX 8 (2026-05-19): LLM-only scoring per PR#1598; judge updated to claude-sonnet-4.6
 
 Key features:
   • Uses R2 dataset (hf_dataset_cache.jsonl, 9,122 records) instead of SWEbench
   • NO git cloning from GitHub — repos are built locally from patch context lines
-  • cursor_sim = LCS(agent_patch, R2_reference_patch) / max_lines
+  • cursor_sim = LCS(agent_patch, R2_reference_patch) / max_lines  (telemetry only)
     — EXACT same reference patches as the live validator
   • Judge window: 60,000 chars per patch (matches live validator _DIFF_JUDGE_MAX_PATCH_CHARS)
   • Language distribution matches live validator (40% TS, 19% Py, ~19% JS, …)
   • Synthetic repos created in seconds (no network, just file writes)
-  • Uses openai/gpt-5.4 as duel judge (matches live SN66 validator _DIFF_JUDGE_MODEL exactly)
+  • Uses anthropic/claude-sonnet-4.6 as duel judge (PR#1598 _DIFF_JUDGE_MODEL)
   • LLM judge returns independent quality scores (0-100 each), matching live validator behavior
 
-Scoring formula (REVERTED 2026-05-09 per commit b070efa — "Revert validator to old scoring"):
-  combined = 0.5 × cursor_sim + 0.5 × llm_judge_score  (challenger and king each)
+Scoring formula (UPDATED 2026-05-19 per PR#1598 — LLM-only scoring):
+  combined = 1.0 × llm_score  (cursor_sim is telemetry only, no longer contributes)
   decisive_win_rate   = wins / (wins + losses)  [ties excluded]
   win_margin = 3 live (CLI override: validator runs with --win-margin 3, code default=0)
-  NOTE: Dual-LLM reverted 2026-05-09 → old scoring restored (single GPT-5.4 judge)
-  Source: validate.py _DIFF_JUDGE_WEIGHT=0.5, config.py validate_win_margin=0 (code), 3 (CLI)
+  Judge: anthropic/claude-sonnet-4.6 via OpenRouter (was openai/gpt-5.4)
 
 Usage:
-  python3 validator_harness_v5.py --lcs-test
-  python3 validator_harness_v5.py --list-tasks 5
-  python3 validator_harness_v5.py --test-repo
-  python3 validator_harness_v5.py --challenger agent_t68_v18.py --tasks 20
-  python3 validator_harness_v5.py --challenger agent_t68_v18.py --tasks 20 --parallel 3 --timeout 300
-  python3 validator_harness_v5.py --challenger agent_t68_v18.py --tasks 20 --king-sha abc123def456
-  python3 validator_harness_v5.py --challenger agent_t68_v18.py --tasks 20 --judge-model anthropic/claude-opus-4.7
+  python3 validator_harness_v6.py --lcs-test
+  python3 validator_harness_v6.py --list-tasks 5
+  python3 validator_harness_v6.py --test-repo
+  python3 validator_harness_v6.py --challenger agent_t68_v18.py --tasks 20
+  python3 validator_harness_v6.py --challenger agent_t68_v18.py --tasks 20 --parallel 3 --timeout 300
+  python3 validator_harness_v6.py --challenger agent_t68_v18.py --tasks 20 --king-sha abc123def456
+  python3 validator_harness_v6.py --challenger agent_t68_v18.py --tasks 20 --judge-model anthropic/claude-opus-4.7
 """
 
 from __future__ import annotations
@@ -1139,7 +1140,7 @@ def run_full_duel(
 
     print("")
     print("╔══════════════════════════════════════════════════════════════════╗")
-    print("║  SN66 Ninja — Harness v5  (R2 Synthetic Repos, live formula)   ║")
+    print("║  SN66 Ninja — Harness v6  (R2 Synthetic Repos, LLM-only score)  ║")
     print("╚══════════════════════════════════════════════════════════════════╝")
     print("")
     print(f"  CHALLENGER: {Path(challenger_path).name} ({c_lines} lines)")
@@ -1187,7 +1188,7 @@ def run_full_duel(
         pass
     print("")
     print("  ─────────────────────────────────────────────────────────────────")
-    print("  Scoring: combined = 0.5 × cursor_sim + 0.5 × llm_judge_score")
+    print("  Scoring: combined = 1.0 × llm_score  (cursor_sim is telemetry — PR#1598 LLM-only)")
     print("           decisive_win_rate = wins / (wins + losses)  [ties excl.]")
     print("           validator win_margin = 3 (CLI override; challenger needs wins - losses > 3 to dethrone)")
     print("  ─────────────────────────────────────────────────────────────────")
@@ -1297,7 +1298,7 @@ def run_full_duel(
     print(f"  Cursor-sim avg (ours): {avg_c:.3f}  |  King: {avg_k:.3f}  {c_adv_str}")
     print(f"  LLM judge win rate:    {llm_rate*100:.1f}%  "
           f"({llm_wins}W-{llm_losses}L-{llm_ties}T)")
-    print(f"  Combined win rate:     {decisive_wr*100:.1f}% decisive  "
+    print(f"  LLM-only win rate:     {decisive_wr*100:.1f}% decisive  "
           f"({wins}W-{losses}L-{ties}T)")
     print(f"  95% CI (Wilson):       [{ci_lo*100:.1f}%, {ci_hi*100:.1f}%]")
     print(f"  Elapsed:               {elapsed:.0f}s  |  Est. cost: ${total_cost:.4f}")
