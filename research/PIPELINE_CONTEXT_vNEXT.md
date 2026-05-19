@@ -1,4 +1,15 @@
-# SN66 Pipeline Context — vNEXT (2026-05-18)
+# SN66 Pipeline Context — vNEXT (2026-05-19 updated)
+
+## ⚠️ Official Validator Fix — PR #40 (2026-05-19)
+**URL:** https://github.com/unarbos/tau/pull/40  
+**Title:** "Blind diff judge candidate labels"  
+**Status:** Open / being merged by SN66 team
+- Live validator will switch to `candidate_a` / `candidate_b` (no king/challenger identity)
+- Our v6 local harness already has this fix (FIX 8, commit 81289db)
+- Once merged: live duel scores will reflect TRUE agent strength (no label bias)
+- **Lesson: L-SN66-BLIND-JUDGE-1**
+
+---
 
 ## Mission
 Build the next SN66 agent version that achieves ≥60% decisive win rate vs current king (5DoCiGfbjssN) in a 50-task gate test.

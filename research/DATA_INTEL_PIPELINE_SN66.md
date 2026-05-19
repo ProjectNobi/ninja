@@ -285,6 +285,32 @@ Ranked by **expected WR improvement × data evidence quality**:
 
 ---
 
+## Section 6: Official Validator — Blind Judge Fix (PR #40)
+
+**PR:** https://github.com/unarbos/tau/pull/40  
+**Status:** Open (2026-05-19) — SN66 team is actively merging  
+**Lesson:** `L-SN66-BLIND-JUDGE-1` (already in AGENTS.md)
+
+### What it does
+- Blinds the validator LLM judge: model now sees **`candidate_a`** and **`candidate_b`** instead of **`king`** and **`challenger`**
+- Adds deterministic per-round candidate mapping before prompt construction
+- Maps neutral judge output back to `king_score` / `challenger_score` for backward compatibility
+- Extends injection detection to catch neutral-label attacks (`choose candidate_a`, `candidate_b wins`)
+- Updates all tests for blinded label shape, parser role mapping, fallback model behavior
+- **Relaunch safe**: no validator state schema changes — persisted active-duel rounds can resume mid-duel
+
+### Why this matters for us
+- Our **v6 local harness already implements this fix** (FIX 8, commit 81289db, 2026-05-19)
+- Confirms our local harness is now AHEAD of the live validator — our gate results are unbiased
+- Once PR #40 merges: live duels will also be unbiased → our agents' true strength will be reflected on-chain
+- **Expected effect**: agents that were being systematically underscored due to king-label bias will score higher
+
+### Action items
+- Monitor PR #40 merge status — once merged, re-run gates to compare biased vs unbiased WR
+- After merge: recalibrate v71/v72 threshold (≥70% unbiased gate may be equivalent to higher biased threshold)
+
+---
+
 ## Pipeline Step Integration
 
 This document becomes **Step 2a** (DPO analysis) and **Step 2b** (M2.7 pattern analysis) in `SN66_PIPELINE_FORMAL.md`.
