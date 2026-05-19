@@ -1,5 +1,60 @@
 # SN66 MINING PIPELINE — FORMAL INSTRUCTIONS
 *James directive 2026-05-18 | T68Bot standing operating procedure*
+*Last updated: 2026-05-19 — Judge mechanism update + v66 build*
+
+---
+
+## 🏛️ SN66 SCORING MECHANISM — LLM JUDGES (James directive 2026-05-19)
+
+### Phase 1 — CURRENT (live since PR#1598, 2026-05-19 01:43 UTC)
+| Field | Value |
+|-------|-------|
+| **Judge** | `anthropic/claude-sonnet-4.6` via OpenRouter |
+| **Scoring** | 100% LLM judge — cursor_sim is telemetry ONLY (no weight) |
+| **Temperature** | 0 (deterministic) |
+| **Reasoning** | Adaptive |
+| **Output cap** | 16,000 tokens |
+| **Caching** | OpenRouter Anthropic prompt caching on task + reference context |
+| **Fallback judge** | `moonshotai/kimi-k2.6` when Sonnet returns no-choices error |
+| **Win condition** | challenger_wins - challenger_losses > 3 (win_margin=3) |
+
+**What Sonnet 4.6 rewards:**
+- Root cause identification (not symptom fixes)
+- Idiomatic, architecturally consistent code
+- Proper error types (not generic wrappers)
+- Completeness without churn
+- Code that would pass a senior engineer's code review
+
+**Training target for Phase 1:** `sonnet_winner` field in DPO pairs
+
+---
+
+### Phase 2 — COMING NEXT WEEK (SN66 team upgrade)
+| Field | Value |
+|-------|-------|
+| **Judges** | `anthropic/claude-sonnet-4.6` + `openai/gpt-5.4` (dual) |
+| **Scoring** | Consensus of both judges |
+| **Win condition** | Must win or tie against BOTH judges |
+
+**Training target for Phase 2:** `consensus=True` DPO pairs (both judges agree)
+
+**Our data advantage:** ALL our DPO pairs already contain BOTH judge fields:
+- `sonnet_winner` / `sonnet_rationale` — Sonnet 4.6 preference
+- `gpt54_winner` / `gpt54_score_chosen` / `gpt54_score_rejected` — GPT-5.4 preference
+- `consensus` — True when both judges agree = highest quality training signal
+
+**Action when Phase 2 launches:**
+1. Filter DPO training data to `consensus=True` pairs only
+2. Rebuild agent version targeting dual-judge consensus wins
+3. Gate test with both judges
+
+---
+
+### Harness v6 Judge Config (updated 2026-05-19)
+- JUDGE_MODEL: `anthropic/claude-sonnet-4.6` (Phase 1 — matches live validator)
+- JUDGE_MODEL_FALLBACK: `moonshotai/kimi-k2.6`
+- Scoring formula: `c_combined = llm_score_challenger` (no cursor_sim)
+- **Rule: Always keep harness judge in sync with live validator after any PR merge**
 
 ---
 
