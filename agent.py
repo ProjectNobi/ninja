@@ -90,8 +90,8 @@ DEFAULT_MAX_TOKENS = int(os.environ.get("AGENT_MAX_TOKENS", "8192"))
 MAX_OBSERVATION_CHARS = int(os.environ.get("AGENT_MAX_OBSERVATION_CHARS", "16000"))
 MAX_TOTAL_LOG_CHARS = int(os.environ.get("AGENT_MAX_TOTAL_LOG_CHARS", "260000"))
 MAX_CONVERSATION_CHARS = 80000
-MAX_PRELOADED_CONTEXT_CHARS = 50000  # wider preload reduces catastrophic-floor
-MAX_PRELOADED_FILES = 22              # rounds on issues spanning multiple modules
+MAX_PRELOADED_CONTEXT_CHARS = 90000  # XL_NARROW_V2: deeper per-file context (king parity)
+MAX_PRELOADED_FILES = 18              # fewer, better-localized files (depth over breadth)
 MAX_NO_COMMAND_REPAIRS = 2
 MAX_COMMANDS_PER_RESPONSE = 25
 
@@ -557,6 +557,305 @@ def extract_final(model_text: str) -> Optional[str]:
     if not match:
         return None
     return match.group(1).strip()
+
+
+# -----------------------------
+# Structured edit verb (IMPL-3, ported from king_agent.py)
+# -----------------------------
+# Lives outside bash, so it cannot truncate mid-payload and cannot silently
+# no-op. Backwards compatible: <command> continues to dispatch as before;
+# <edit> blocks are parsed by extract_edits() and executed by execute_edit().
+EDIT_RE = re.compile(r"<edit\b([^>]*)>\s*(.*?)\s*</edit>", re.IGNORECASE | re.DOTALL)
+# Tolerate double-quoted, single-quoted, AND unquoted attribute values.
+_EDIT_ATTR_RE = re.compile(r"""(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s'">]+))""")
+
+
+def _parse_edit_attrs(attr_str: str) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for m in _EDIT_ATTR_RE.finditer(attr_str or ""):
+        val = m.group(2)
+        if val is None:
+            val = m.group(3)
+        if val is None:
+            val = m.group(4)
+        out[m.group(1).lower()] = val or ""
+    return out
+
+
+_EDIT_BLOCK_RE = re.compile(
+    r"<(old|new|content)\b[^>]*>\n?(.*?)\n?</\1>",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Smart-quote / dash / NBSP / multi-space normalization for fuzzy match recovery.
+_FUZZY_TRANSLATE = str.maketrans({
+    "\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",
+    "\u201c": '"', "\u201d": '"', "\u201e": '"', "\u2032": "'",
+    "\u2013": "-", "\u2014": "-", "\u00a0": " ",
+})
+
+
+def _norm_for_fuzzy(s: str) -> str:
+    """Collapse multi-space and translate smart punctuation for matching."""
+    lines = s.translate(_FUZZY_TRANSLATE).split("\n")
+    return "\n".join(re.sub(r"[ \t]+", " ", ln).rstrip() for ln in lines)
+
+
+def _fuzzy_locate(src: str, old: str) -> Optional[Tuple[int, int]]:
+    """If verbatim match fails, try a normalized match. Returns (start, end)
+    offsets in the ORIGINAL source. Only succeeds when normalized match is unique."""
+    n_old = _norm_for_fuzzy(old)
+    if not n_old.strip():
+        return None
+    o_lines = src.split("\n")
+    n_lines = [_norm_for_fuzzy(ln) for ln in o_lines]
+    target = n_old.split("\n")
+    matches = []
+    for i in range(len(n_lines) - len(target) + 1):
+        if n_lines[i:i + len(target)] == target:
+            matches.append(i)
+    if len(matches) != 1:
+        return None
+    i = matches[0]
+    start = sum(len(o_lines[j]) + 1 for j in range(i))
+    end = start + sum(len(o_lines[j]) + 1 for j in range(i, i + len(target))) - 1
+    return (start, end)
+
+
+def extract_edits(model_text: str) -> List[Dict[str, Any]]:
+    """Parse <edit ...> blocks from the model's response."""
+    out: List[Dict[str, Any]] = []
+
+    def _mk(attr_str: str, body: str, raw: str) -> Dict[str, Any]:
+        attrs = _parse_edit_attrs(attr_str)
+        blocks: Dict[str, str] = {}
+        for b in _EDIT_BLOCK_RE.finditer(body or ""):
+            blocks[b.group(1).lower()] = b.group(2)
+        try:
+            line_arg = int(attrs.get("line", "0") or 0)
+        except ValueError:
+            line_arg = 0
+        try:
+            count_arg = int(attrs.get("count", "1") or 1)
+        except ValueError:
+            count_arg = 1
+        op = (attrs.get("op") or "replace").lower()
+        content = blocks.get("content", "")
+        new = blocks.get("new", "")
+        old = blocks.get("old", "")
+        # Wrong-block recovery: a write/insert whose payload landed in the WRONG
+        # tag would otherwise silently write an EMPTY file. Adopt the populated
+        # block. Gated so it never overrides an intentional empty file.
+        if op in ("write", "insert") and not content.strip():
+            if new.strip():
+                content = new
+            elif old.strip():
+                content = old
+        return {
+            "path": attrs.get("path", ""),
+            "op": op,
+            "line": line_arg,
+            "count": count_arg,
+            "old": old,
+            "new": new,
+            "content": content,
+            "raw": raw,
+        }
+
+    for m in EDIT_RE.finditer(model_text):
+        out.append(_mk(m.group(1) or "", m.group(2) or "", m.group(0)))
+
+    # Salvage a TRUNCATED final edit: token cap cut off </edit>. Recover only
+    # when the inner <content>/<new>/<old> IS properly closed.
+    last_open = None
+    for om in re.finditer(r"<edit\b([^>]*)>", model_text, re.IGNORECASE):
+        last_open = om
+    if last_open is not None:
+        tail = model_text[last_open.end():]
+        if "</edit>" not in tail and re.search(r"</(old|new|content)>", tail, re.IGNORECASE):
+            out.append(_mk(last_open.group(1) or "", tail, model_text[last_open.start():]))
+    return out
+
+
+def extract_actions_in_order(model_text: str) -> List[Tuple[str, Any]]:
+    """Walk the model text and return all <command> and <edit> blocks in
+    document order. Returns list of (kind, value) tuples where kind is
+    'command' (value=str) or 'edit' (value=dict)."""
+    out: List[Tuple[int, str, Any]] = []
+    for m in ACTION_RE.finditer(model_text):
+        cmd = (m.group(1) or "").strip()
+        if cmd:
+            out.append((m.start(), "command", cmd))
+    for ed in extract_edits(model_text):
+        idx = model_text.find(ed["raw"])
+        out.append((idx if idx >= 0 else 0, "edit", ed))
+    out.sort(key=lambda t: t[0])
+    return [(kind, value) for _, kind, value in out]
+
+
+# Code-file suffixes where an HTML entity like &lt; is NEVER intended literal.
+_CODE_ENTITY_SUFFIXES = {
+    ".java", ".kt", ".scala", ".py", ".go", ".rs", ".c", ".cc", ".cpp", ".cxx",
+    ".h", ".hpp", ".cs", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".rb",
+    ".php", ".swift", ".dart", ".sql", ".css", ".scss", ".sh", ".zig",
+}
+
+
+def _maybe_unescape_code_entities(text: str, rel: str) -> str:
+    """Unescape HTML entities in edit content destined for a CODE file, but ONLY
+    when the telltale structural escape (&lt; / &gt;) is present."""
+    if not text or Path(rel).suffix.lower() not in _CODE_ENTITY_SUFFIXES:
+        return text
+    if "&lt;" not in text and "&gt;" not in text:
+        return text
+    try:
+        import html as _html
+        return _html.unescape(text)
+    except Exception:
+        return text
+
+
+_FENCE_OPEN_RE = re.compile(r"^(`{3,}|~{3,})[ \t]*[\w.+#/-]*[ \t]*$")
+_FENCE_CLOSE_RE = re.compile(r"^(`{3,}|~{3,})[ \t]*$")
+_NO_FENCE_STRIP_SUFFIXES = {".md", ".markdown", ".mdx", ".rst", ".txt"}
+
+
+def _strip_wrapping_code_fence(text: str, rel: str) -> str:
+    """Strip a single ```lang ... ``` fence that wraps the ENTIRE edit payload."""
+    if not text or Path(rel).suffix.lower() in _NO_FENCE_STRIP_SUFFIXES:
+        return text
+    lines = text.split("\n")
+    first = 0
+    while first < len(lines) and lines[first].strip() == "":
+        first += 1
+    last = len(lines) - 1
+    while last >= 0 and lines[last].strip() == "":
+        last -= 1
+    if first >= last:
+        return text
+    if _FENCE_OPEN_RE.match(lines[first]) and _FENCE_CLOSE_RE.match(lines[last]):
+        inner = lines[first + 1:last]
+        if not any(_FENCE_CLOSE_RE.match(ln) for ln in inner):
+            return "\n".join(inner)
+    return text
+
+
+def execute_edit(edit: Dict[str, Any], repo: Path) -> CommandResult:
+    """Execute one structured <edit> block. Returns a CommandResult with the
+    same shape as run_command so format_observation handles it uniformly."""
+    t0 = time.monotonic()
+    raw_cmd = f"<edit path={edit['path']!r} op={edit['op']!r}>"
+
+    def _ok(stdout: str) -> CommandResult:
+        return CommandResult(
+            command=raw_cmd, stdout=stdout, stderr="",
+            exit_code=0, duration_sec=time.monotonic() - t0, timed_out=False,
+        )
+
+    def _err(stderr: str) -> CommandResult:
+        return CommandResult(
+            command=raw_cmd, stdout="", stderr=stderr,
+            exit_code=1, duration_sec=time.monotonic() - t0, timed_out=False,
+        )
+
+    rel = (edit.get("path") or "").lstrip("/")
+    if not rel or ".." in Path(rel).parts:
+        return _err(f"Invalid path: {edit.get('path')!r}")
+    fp = repo / rel
+    op = edit.get("op", "replace")
+    for _k in ("content", "new", "old"):
+        if edit.get(_k):
+            edit[_k] = _maybe_unescape_code_entities(edit[_k], rel)
+    for _k in ("content", "new"):
+        if edit.get(_k):
+            edit[_k] = _strip_wrapping_code_fence(edit[_k], rel)
+    try:
+        if op == "write":
+            content = edit.get("content") or ""
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_text(content)
+            return _ok(f"Wrote {len(content)} bytes to {rel}")
+        if not fp.exists():
+            return _err(f"File not found: {rel}")
+        src = fp.read_text(errors="replace")
+        if op == "replace":
+            old = edit.get("old") or ""
+            new = edit.get("new") or ""
+            if not old:
+                return _err(
+                    "Replace requires <old>. To create a new file or overwrite, "
+                    "use op=\"write\" with <content>."
+                )
+            if old in src:
+                count = src.count(old)
+                if count > 1:
+                    return _err(
+                        f"Found {count} occurrences of old text in {rel}; "
+                        "must be unique. Please provide more context to make it unique."
+                    )
+                out = src.replace(old, new, 1)
+                if out == src:
+                    return _err(f"No changes made to {rel}. Replacement produced identical content.")
+                fp.write_text(out)
+                return _ok(f"Replaced 1 occurrence in {rel} ({len(src)} -> {len(out)} bytes)")
+            located = _fuzzy_locate(src, old)
+            if located is None:
+                return _err(
+                    f"Could not find the exact text in {rel}. Old text must "
+                    "match including all whitespace and newlines."
+                )
+            s, e = located
+            out = src[:s] + new + src[e:]
+            if out == src:
+                return _err(f"No changes made to {rel}. Replacement produced identical content.")
+            fp.write_text(out)
+            return _ok(
+                f"Replaced 1 occurrence in {rel} via whitespace/quote-"
+                f"normalized match ({len(src)} -> {len(out)} bytes). Verify the change."
+            )
+        if op == "insert":
+            content = edit.get("content") or ""
+            line = edit.get("line", 0)
+            lines = src.split("\n")
+            insert_at = max(0, min(line, len(lines)))
+            new_lines = content.split("\n")
+            if new_lines and new_lines[-1] == "":
+                new_lines = new_lines[:-1]
+            out_lines = lines[:insert_at] + new_lines + lines[insert_at:]
+            out = "\n".join(out_lines)
+            if out == src:
+                return _err(f"No changes made to {rel}. Empty insert content?")
+            fp.write_text(out)
+            return _ok(f"Inserted {len(new_lines)} line(s) at line {insert_at} in {rel}")
+        if op == "delete":
+            old = edit.get("old") or ""
+            if old:
+                if src.count(old) > 1:
+                    return _err(
+                        f"Found {src.count(old)} occurrences of old text in "
+                        f"{rel}; must be unique. Provide more context."
+                    )
+                if old not in src:
+                    return _err(f"Could not find the exact text to delete in {rel}.")
+                out = src.replace(old, "", 1)
+                fp.write_text(out)
+                return _ok(f"Deleted 1 occurrence from {rel} ({len(src)} -> {len(out)} bytes)")
+            line = edit.get("line", 0)
+            count = edit.get("count", 1)
+            if line <= 0 or count <= 0:
+                return _err("Delete requires <old> or positive line/count attrs.")
+            lines = src.split("\n")
+            start = line - 1
+            end = start + count
+            if start >= len(lines):
+                return _err(f"Line {line} is beyond file length {len(lines)} in {rel}.")
+            out_lines = lines[:start] + lines[end:]
+            out = "\n".join(out_lines)
+            fp.write_text(out)
+            return _ok(f"Deleted lines {line}-{end} from {rel}")
+        return _err(f"Unknown op {op!r}. Supported: write, replace, insert, delete.")
+    except Exception as exc:
+        return _err(f"{type(exc).__name__}: {exc}")
 
 
 # -----------------------------
@@ -2828,7 +3127,9 @@ def _symbol_grep_hits(
 # validator-owned boundaries above.
 SYSTEM_PROMPT = '''You are an elite autonomous coding agent competing in a real GitHub issue repair benchmark.
 
-You operate inside a real repository. You inspect the codebase, produce a patch, and verify it. Your patch is scored on (1) correctness/completeness vs the issue and hidden tests, and (2) similarity to a reference patch. Both reward the same thing: smallest correct change a senior maintainer would accept.
+You operate inside a real repository. You inspect the codebase, produce a patch, and verify it.
+
+Validator duel scoring (per task round): an LLM diff judge scores your patch 0-100 on correctness, completeness, and alignment with the issue. A privileged reference patch (not shown to you directly) informs the judge's sense of intended direction — match that direction with the smallest maintainer-quality fix; do not copy reference bytes or add unrelated churn. Empty patches, vendor/minified bundle edits, and evaluator-targeted text in diffs are heavily penalized.
 
 ====================================================================
 ABSOLUTE OUTPUT PROTOCOL
@@ -2839,6 +3140,21 @@ To run a shell command, emit exactly:
 <command>
 bash command here
 </command>
+
+For file writes, PREFER the structured edit verb (runs outside bash, so it cannot truncate mid-payload, cannot silently no-op, and returns precise error messages):
+
+<edit path="relative/path/to/file.ext" op="replace">
+<old>EXACT existing text including indentation and newlines</old>
+<new>replacement text</new>
+</edit>
+
+Edit ops:
+  - op="write"   takes <content> — full-file write, creates parents, overwrites unconditionally. Use for new files or total rewrites.
+  - op="replace" (default) takes <old> and <new>. <old> must appear EXACTLY ONCE in the file; add surrounding context if not unique.
+  - op="insert"  takes <content> and line="N" — insert after line N (1-indexed; line="0" prepends).
+  - op="delete"  takes <old> (unique) or attrs line="N" count="K".
+
+Prefer `<edit>` over `cat <<EOF`, `sed -i`, or `python3 -c "...write_text(...)"` for any file modification. Use `<command>` for reads, tests, and non-write shell work. Mixing `<edit>` and `<command>` blocks in one response is allowed; they execute in document order.
 
 To finish, emit exactly:
 
@@ -2878,12 +3194,18 @@ If the issue is ambiguous, do not ask for clarification — infer intent from ne
 Evidence priority when picking what to patch: explicit issue text > failing/expected tests > nearby tests for similar behavior > the function/class that owns the behavior > existing patterns > public API compatibility > framework conventions > general knowledge. Do not invent behavior the issue and codebase do not support.
 
 ====================================================================
-INSPECTION STRATEGY
+REASONING BEFORE EXECUTION (SWE-ZERO → SWE-HERO)
 ====================================================================
 
-Inspect only what you need to locate the owner of the bug and patch safely. Order: preloaded snippets first, then one or two focused searches (`rg`, fall back to `grep -R`), then the exact target region (`sed -n '120,220p'`), then nearby tests, then call sites only if a signature/public API may change.
+Internalize the bug from the issue text and code reading before running tests. Early turns should be read-only inspection (`grep`, `sed`, repo map, targeted file reads). Run tests only after you have a concrete hypothesis and a minimal fix direction — execution verifies semantics; it should not be your primary discovery loop.
 
-Avoid: re-reading preloaded files, broad recursive searches, generated/vendor output, broad test suites before a targeted fix exists.
+Inspect only what you need to locate the owner of the bug and patch safely. Order: localized preloaded regions first (not whole files), then one or two focused searches (`grep -rn`, or `grep -rnF` for an exact phrase), then `sed -n '120,220p'` on the target region, then nearby tests, then call sites only if a signature/public API may change.
+
+When the issue quotes a long error message, stack trace line, or expected output (20+ characters in quotes or backticks), `grep -rnF` that exact phrase first — it usually lands on the throw site or test assertion you must edit.
+
+Avoid: re-reading preloaded files, broad recursive searches, generated/vendor/minified output, broad test suites before a targeted fix exists.
+
+SANDBOX REALITY — your shell is a minimal Linux container (python3, bash, git, grep, sed, awk, find, sort, cat, ls). The following are NOT installed: `rg`, `node`/`npm`/`npx`, `go`, `cargo`/`rustc`, `tsc`, `swiftc`, `dart`, `jq`, `tree`, `gcc`/`g++`, `java`/`mvn`. There is NO network — `pip install`, `npm install`, `go get`, dependency downloads, and curl/wget all FAIL. Do NOT spend steps invoking absent tools or installing anything: for non-Python repos (JS/TS/Go/Rust/Swift/Dart/Java) you usually CANNOT run their build or tests, so verify by reading the code carefully instead. `python3 -m pytest` works only when the project's deps are already importable; if a test command errors with ModuleNotFound or command-not-found, stop retrying it and rely on careful code review. Every wasted command is a step you do not get back on a short wall.
 
 ====================================================================
 ROOT CAUSE RULE
@@ -2907,7 +3229,9 @@ Change the fewest lines necessary. Allowed: one-line substitution, small guarded
 
 Forbidden unless explicitly required: whole-file or whole-function rewrites when 1-5 lines suffice, formatting churn, whitespace/comment-only edits, code reordering, import sorting, renames for taste, new helpers/abstractions/files, dependency or lockfile changes, vendor/generated edits.
 
-When editing with scripts, always guard replacements:
+PREFER the structured `<edit>` verb for every file modification — it runs outside bash, so it cannot truncate mid-payload or silently no-op (the dominant silent-failure loss mode of heredoc edits). Use `<edit op="replace">` with exact `<old>`/`<new>` for surgical changes, and `<edit op="write">` with `<content>` for new files.
+
+If you must edit with a shell script instead, always guard replacements:
 
 python - <<\'PY\'
 from pathlib import Path
@@ -3648,6 +3972,406 @@ def _multishot_apply_patch(repo: Path, patch_text: str) -> bool:
 
 
 # -----------------------------
+# GPS candidate ensemble (IMPL-1, ported from king_agent.py)
+# -----------------------------
+# Generate-Prune-Select: generate N candidate patches, dedup by AST/hunk
+# signature, score each with an execution-free reward + consensus voting, then
+# select the best by (-reward, -votes). Replaces the linear multi-shot retry.
+GPS_MAX_CANDIDATES = 5            # king's sweet spot (5-6 diverse candidates)
+_GPS_SELECTOR_MAX_INPUT = 6
+
+
+def _patch_hunk_signature(patch: str) -> "frozenset":
+    """Normalized hunk-set signature: frozenset of (path, removed_hash,
+    added_hash) tuples — one per hunk, modulo trailing whitespace and order."""
+    if not patch.strip():
+        return frozenset()
+    out = []
+    current_path = None
+    current_removed: List[str] = []
+    current_added: List[str] = []
+
+    def _flush():
+        if current_path and (current_removed or current_added):
+            r_h = hash("\n".join(l.rstrip() for l in current_removed))
+            a_h = hash("\n".join(l.rstrip() for l in current_added))
+            out.append((current_path, r_h, a_h))
+
+    for line in patch.splitlines():
+        if line.startswith("diff --git "):
+            _flush()
+            current_removed = []
+            current_added = []
+            m = re.match(r"diff --git a/.+? b/(.+?)$", line)
+            current_path = m.group(1) if m else None
+        elif line.startswith("@@"):
+            _flush()
+            current_removed = []
+            current_added = []
+        elif line.startswith("-") and not line.startswith("---"):
+            current_removed.append(line[1:])
+        elif line.startswith("+") and not line.startswith("+++"):
+            current_added.append(line[1:])
+    _flush()
+    return frozenset(out)
+
+
+def _signature_jaccard(a: "frozenset", b: "frozenset") -> float:
+    """Jaccard similarity between two hunk signatures."""
+    if not a and not b:
+        return 1.0
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    union = len(a | b)
+    return inter / union if union else 0.0
+
+
+def _patch_ast_fingerprint(patch: str) -> str:
+    """AST-normalized structural fingerprint for Python-aware deduplication."""
+    import ast as _ast
+    per_file: Dict[str, List[str]] = {}
+    current: Optional[str] = None
+    for line in patch.splitlines():
+        if line.startswith("diff --git "):
+            m = re.match(r"diff --git a/.+? b/(.+?)$", line)
+            current = m.group(1) if m else None
+        elif (
+            current
+            and current.endswith(".py")
+            and line.startswith("+")
+            and not line.startswith("+++")
+        ):
+            per_file.setdefault(current, []).append(line[1:])
+    if not per_file:
+        return "hunk:" + str(sorted(_patch_hunk_signature(patch)))
+    parts: List[str] = []
+    for path in sorted(per_file):
+        snippet = "\n".join(per_file[path]).strip()
+        if not snippet:
+            parts.append(f"{path}:empty")
+            continue
+        try:
+            tree = _ast.parse(snippet)
+            parts.append(f"{path}:{_ast.dump(tree, include_attributes=False)}")
+        except SyntaxError:
+            normalized = "\n".join(ln.strip() for ln in per_file[path])
+            parts.append(f"{path}:raw:{hash(normalized)}")
+    return "|".join(parts)
+
+
+def _gps_dedupe_patches(candidates: List[Tuple[int, str]]) -> List[Tuple[int, str]]:
+    """Stage-1 prune: collapse AST- and hunk-identical samples."""
+    seen: set = set()
+    unique: List[Tuple[int, str]] = []
+    for idx, patch in candidates:
+        if not patch.strip():
+            continue
+        key = (_patch_ast_fingerprint(patch), str(sorted(_patch_hunk_signature(patch))))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((idx, patch))
+    return unique
+
+
+def _cluster_patches(candidates: List[Tuple[str, str]]) -> List[List[int]]:
+    """Union-find clustering by Jaccard >= 0.75 on hunk signatures."""
+    n = len(candidates)
+    if n == 0:
+        return []
+    sigs = [_patch_hunk_signature(p) for _, p in candidates]
+    parent = list(range(n))
+
+    def find(x: int) -> int:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x: int, y: int) -> None:
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            parent[ry] = rx
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _signature_jaccard(sigs[i], sigs[j]) >= 0.75:
+                union(i, j)
+
+    clusters: Dict[int, List[int]] = {}
+    for i in range(n):
+        clusters.setdefault(find(i), []).append(i)
+    return list(clusters.values())
+
+
+def _execution_free_reward_score(
+    patch: str,
+    issue_text: str,
+    *,
+    consensus_votes: int = 1,
+) -> float:
+    """SWE-RM style execution-free reward (correctness signals without runs)."""
+    if not patch.strip():
+        return 0.0
+    score = float(_patch_duel_score(patch, issue_text))
+    score += 12.0 * max(0, consensus_votes - 1)
+    delta_lines = sum(
+        1
+        for ln in patch.splitlines()
+        if ln.startswith(("+", "-")) and not ln.startswith(("+++", "---"))
+    )
+    score -= min(8.0, delta_lines * 0.05)
+    score -= 25.0 * len(_patch_ship_blockers(patch, issue_text))
+    return max(0.0, score)
+
+
+def _named_path_coverage_count(patch: str, issue_text: str) -> int:
+    """Tie-breaker: how many issue-NAMED files this patch actually edits."""
+    try:
+        required = _extract_issue_path_mentions(issue_text)
+        if len(required) < 2:
+            return 0
+        changed = _patch_changed_files(patch)
+        covered = 0
+        for req in required:
+            if any(req == c or c.endswith("/" + req) for c in changed):
+                covered += 1
+        return covered
+    except Exception:
+        return 0
+
+
+def _specification_coverage_count(patch: str, issue_text: str) -> int:
+    """Tie-breaker: how many acceptance criteria the patch's added lines
+    actually mention. Inverse of `_unaddressed_criteria`."""
+    try:
+        criteria = _extract_acceptance_criteria(issue_text)
+        if len(criteria) < 2:
+            return 0
+        unaddressed = _unaddressed_criteria(patch, issue_text)
+        return max(0, len(criteria) - len(unaddressed))
+    except Exception:
+        return 0
+
+
+@dataclass
+class _GpsCandidate:
+    source_idx: int
+    patch: str
+    reward: float
+    consensus_votes: int
+
+
+def _gps_prune_and_score(
+    raw: List[Tuple[int, str]],
+    issue_text: str,
+) -> List[_GpsCandidate]:
+    """Generate-Prune stage: cluster RAW samples for consensus votes, then
+    dedup to representatives.
+
+    CRITICAL: votes are counted over the RAW candidate set (before dedup), not
+    the deduped set. Self-consistency's strongest signal is the model emitting
+    the SAME patch across multiple samples — if we deduped first, three
+    byte-identical high-confidence samples would collapse to votes=1, throwing
+    away exactly the consensus the ensemble exists to capture. We therefore
+    cluster the raw patches (identical patches land in one cluster -> votes=N),
+    then assign each unique representative its full cluster vote count.
+    """
+    raw_nonempty = [(idx, p) for idx, p in raw if p.strip()]
+    if not raw_nonempty:
+        return []
+    # Cluster the RAW set so identical/near-identical samples accrue votes.
+    raw_labeled = [(str(i), p) for i, (_, p) in enumerate(raw_nonempty)]
+    raw_clusters = _cluster_patches(raw_labeled)
+    raw_votes: Dict[int, int] = {}
+    for cluster in raw_clusters:
+        for ri in cluster:
+            raw_votes[ri] = len(cluster)
+    # Map each raw patch to its votes, then dedup to unique representatives,
+    # keeping the MAX votes seen for that patch signature.
+    unique = _gps_dedupe_patches(raw_nonempty)
+    if not unique:
+        return []
+
+    def _sig_key(patch: str) -> Tuple[str, str]:
+        return (_patch_ast_fingerprint(patch), str(sorted(_patch_hunk_signature(patch))))
+
+    votes_by_sig: Dict[Tuple[str, str], int] = {}
+    for ri, (_orig, patch) in enumerate(raw_nonempty):
+        key = _sig_key(patch)
+        votes_by_sig[key] = max(votes_by_sig.get(key, 1), raw_votes.get(ri, 1))
+
+    scored: List[_GpsCandidate] = []
+    for orig_idx, patch in unique:
+        votes = votes_by_sig.get(_sig_key(patch), 1)
+        scored.append(
+            _GpsCandidate(
+                source_idx=orig_idx,
+                patch=patch,
+                reward=_execution_free_reward_score(patch, issue_text, consensus_votes=votes),
+                consensus_votes=votes,
+            )
+        )
+    scored.sort(key=lambda c: (-c.reward, -c.consensus_votes,
+                               -_named_path_coverage_count(c.patch, issue_text),
+                               -_specification_coverage_count(c.patch, issue_text),
+                               len(c.patch)))
+    return scored[:_GPS_SELECTOR_MAX_INPUT]
+
+
+def _gps_select(
+    candidates: List[_GpsCandidate],
+    issue_text: str,
+) -> Optional[_GpsCandidate]:
+    """Select winner: reward > consensus > coverage tie-breakers > smallest diff."""
+    if not candidates:
+        return None
+    pool = sorted(candidates, key=lambda c: (-c.reward, -c.consensus_votes,
+                                             -_named_path_coverage_count(c.patch, issue_text),
+                                             -_specification_coverage_count(c.patch, issue_text),
+                                             len(c.patch)))
+    return pool[0]
+
+
+# Per-candidate generation budget bounds. GPS generates up to GPS_MAX_CANDIDATES
+# patches sequentially under the shared outer budget. CRITICAL: candidate 1 must
+# NOT be allowed to consume the whole outer budget (which would collapse GPS to a
+# single sample and destroy the entire ensemble lever). So:
+#   * candidate 1 runs at the standard WALL_CLOCK_BUDGET_SECONDS (matches king's
+#     attempt-1 behaviour — full first shot),
+#   * candidates 2..N run under BOUNDED budgets (king pattern: max 30..70s each),
+#     reserving _MULTISHOT_MIN_ATTEMPT_RESERVE so the process never dies
+#     mid-candidate (the catastrophic-floor failure mode), AND
+#   * if candidate 1 already ate the outer budget (> _MULTISHOT_MAX_FIRST_ELAPSED),
+#     we stop — a starved candidate-2 finishing after the docker wall is worse
+#     than shipping candidate 1.
+# Fast-exit: if candidate 1 is already strong (>= _GPS_FAST_EXIT_SUBSTANTIVE
+# substantive lines), skip the rest — avoids wasted API calls when the first shot
+# is confidently good (the king's _MULTISHOT_LOW_SIGNAL_THRESHOLD early-return).
+_GPS_MIN_CANDIDATES = 2
+_GPS_PER_CANDIDATE_MIN = 30.0       # king attempt-2/3 lower bound
+_GPS_PER_CANDIDATE_MAX = 70.0       # king attempt-2 upper bound
+_GPS_FAST_EXIT_SUBSTANTIVE = 6      # candidate-1 confidence floor for fast-exit
+
+
+def _gps_generate_candidates(
+    kwargs: Dict[str, Any],
+    repo_obj: Optional[Path],
+    initial_head: Optional[str],
+    started_at: float,
+) -> List[Tuple[int, str, Dict[str, Any]]]:
+    """Generate up to GPS_MAX_CANDIDATES patches via repeated _solve_attempt,
+    reverting the worktree between candidates. Degrades gracefully: a failed
+    candidate is skipped, never crashes the caller.
+
+    Budget model (king-aligned):
+      - candidate 1 gets the standard first-shot budget (full WALL_CLOCK_BUDGET),
+      - candidates 2..N get BOUNDED budgets (30..70s) carved from what remains,
+        so candidate 1 can never starve the ensemble,
+      - fast-exit if candidate 1 is strongly substantive,
+      - stop if candidate 1 over-ran (_MULTISHOT_MAX_FIRST_ELAPSED) or remaining
+        budget can't finish another candidate safely.
+
+    Returns list of (idx, patch_text, full_result_dict).
+    """
+    out: List[Tuple[int, str, Dict[str, Any]]] = []
+    issue_text = kwargs.get("issue", "") or ""
+    first_substantive = 0
+    for idx in range(GPS_MAX_CANDIDATES):
+        elapsed = time.monotonic() - started_at
+        remaining = _MULTISHOT_TOTAL_BUDGET - elapsed
+
+        if idx == 0:
+            # Candidate 1: standard first shot. Do NOT hand it the whole outer
+            # budget — cap at WALL_CLOCK_BUDGET_SECONDS so even a slow first
+            # shot leaves room for the ensemble.
+            per_cand_budget = min(
+                WALL_CLOCK_BUDGET_SECONDS,
+                max(_GPS_PER_CANDIDATE_MIN, remaining - _MULTISHOT_MIN_ATTEMPT_RESERVE),
+            )
+        else:
+            # Candidates 2..N: stop conditions first.
+            if first_substantive >= _GPS_FAST_EXIT_SUBSTANTIVE:
+                # Candidate 1 already strong — fast-exit, save API calls.
+                break
+            if elapsed > _MULTISHOT_MAX_FIRST_ELAPSED and idx == 1:
+                # Candidate 1 over-ran the budget; a starved candidate 2 risks
+                # dying after the docker wall. Ship what we have.
+                break
+            if remaining < (_GPS_PER_CANDIDATE_MIN + _MULTISHOT_MIN_ATTEMPT_RESERVE):
+                # Not enough time to finish another candidate safely.
+                break
+            # Bounded per-candidate budget (king attempt-2/3 shape).
+            per_cand_budget = max(
+                _GPS_PER_CANDIDATE_MIN,
+                min(_GPS_PER_CANDIDATE_MAX, remaining - _MULTISHOT_MIN_ATTEMPT_RESERVE),
+            )
+
+        # Revert worktree to the captured baseline before each candidate so
+        # candidates are independent samples, not cumulative edits.
+        if repo_obj is not None and idx > 0:
+            _multishot_revert(repo_obj, initial_head)
+        try:
+            attempt_kwargs = {**kwargs, "_wall_clock_budget": per_cand_budget}
+            if idx > 0:
+                # Diagnosis-driven bootstrap: candidates 2..N learn from
+                # candidate 1's failure modes (king pattern) rather than
+                # sampling blind. Falls back to a generic independent-sample
+                # prompt if no prior patch / diagnosis available.
+                bootstrap = (
+                    f"This is candidate sample {idx + 1}/{GPS_MAX_CANDIDATES}. "
+                    "Produce a correct, minimal, self-contained patch; do not "
+                    "assume any prior edits remain.\n"
+                )
+                if out:
+                    try:
+                        _first_patch = out[0][1]
+                        _first_res = out[0][2]
+                        bootstrap = build_attempt2_bootstrap(_first_res, first_substantive)
+                        _diag = _diagnose_attempt_failure(_first_patch, issue_text, repo_obj) \
+                            if "_diagnose_attempt_failure" in globals() else []
+                        if _diag:
+                            bootstrap += (
+                                "\nPrior-candidate failure modes — act on each:\n"
+                                + "\n".join(f"  - {d}" for d in _diag[:6]) + "\n"
+                            )
+                        else:
+                            _blk = _patch_ship_blockers(_first_patch, issue_text)
+                            if _blk:
+                                bootstrap += (
+                                    "\nPrior-candidate ship blockers to fix: "
+                                    + ", ".join(_blk) + "\n"
+                                )
+                        bootstrap += (
+                            "\nAn independent attempt — pick the file/function you "
+                            "are MOST confident about and make the minimum surgical "
+                            "change. Avoid the prior attempt's failure modes.\n"
+                        )
+                    except Exception:
+                        pass
+                attempt_kwargs["_prior_attempt_summary"] = bootstrap
+            result = _solve_attempt(**attempt_kwargs)
+        except Exception:
+            continue
+        patch = (result or {}).get("patch", "") or ""
+        # Capture the on-disk patch (the candidate's actual edits) before the
+        # next iteration reverts it.
+        if repo_obj is not None:
+            try:
+                disk_patch = get_patch(repo_obj)
+                if disk_patch.strip():
+                    patch = disk_patch
+            except Exception:
+                pass
+        if patch.strip():
+            out.append((idx, patch, result or {}))
+            if idx == 0:
+                first_substantive = _multishot_count_substantive(patch)
+    return out
+
+
+# -----------------------------
 # Main agent (v28 — multi-shot wrapper around _solve_inner)
 # -----------------------------
 
@@ -3724,57 +4448,61 @@ def _solve_with_safety_net(**kwargs: Any) -> Dict[str, Any]:
         _multishot_started = time.monotonic()
         _multishot_initial_head = _multishot_capture_head(_multishot_repo_obj) if _multishot_repo_obj else None
 
-        _result1 = _solve_attempt(**kwargs)
-        _patch1 = _result1.get("patch", "") or ""
-        _n1 = _multishot_count_substantive(_patch1)
+        # IMPL-1: GPS candidate ensemble replaces linear multi-shot retry.
+        # Generate N candidate patches (reverting between each), dedup by
+        # AST/hunk signature, score with execution-free reward + consensus
+        # voting, then select the best. Degrades gracefully at every step.
+        _gps_raw = _gps_generate_candidates(
+            kwargs, _multishot_repo_obj, _multishot_initial_head, _multishot_started
+        )
 
-        if _n1 >= _MULTISHOT_LOW_SIGNAL_THRESHOLD:
-            _result1["multishot_attempts"] = 1
-            return _finalize(_result1)
+        # Map idx -> full result dict so we can return the winner's metadata.
+        _result_by_idx: Dict[int, Dict[str, Any]] = {idx: res for idx, _p, res in _gps_raw}
+        _candidate_pairs: List[Tuple[int, str]] = [(idx, patch) for idx, patch, _res in _gps_raw]
 
-        _elapsed = time.monotonic() - _multishot_started
-        if (_MULTISHOT_TOTAL_BUDGET - _elapsed) < _MULTISHOT_MIN_ATTEMPT_RESERVE:
-            _result1["multishot_attempts"] = 1
-            _result1["multishot_skipped_retry"] = "insufficient_time"
-            return _finalize(_maybe_emergency(_result1, _multishot_started))
+        if not _candidate_pairs:
+            # No candidate produced a patch. Fall back to a single attempt on a
+            # clean worktree, then emergency rescue if still empty.
+            if _multishot_repo_obj is not None:
+                _multishot_revert(_multishot_repo_obj, _multishot_initial_head)
+            _fallback = _solve_attempt(**kwargs)
+            _fallback["gps_candidates"] = 0
+            _fallback["gps_fallback"] = "no_candidate_patch"
+            return _finalize(_maybe_emergency(_fallback, _multishot_started))
 
-        if _elapsed > _MULTISHOT_MAX_FIRST_ELAPSED:
-            _result1["multishot_attempts"] = 1
-            _result1["multishot_skipped_retry"] = "first_attempt_used_outer_budget"
-            return _finalize(_maybe_emergency(_result1, _multishot_started))
+        _scored = _gps_prune_and_score(_candidate_pairs, _issue_text)
+        _winner = _gps_select(_scored, _issue_text)
 
-        if _multishot_repo_obj is not None:
+        if _winner is None:
+            # Dedup/score collapsed everything; ship the first raw candidate.
+            _fallback_idx, _fallback_patch = _candidate_pairs[0]
+            _result = dict(_result_by_idx.get(_fallback_idx) or {})
+            _result["patch"] = _fallback_patch
+            _winner_patch = _fallback_patch
+            _winner_idx = _fallback_idx
+        else:
+            _winner_idx = _winner.source_idx
+            _winner_patch = _winner.patch
+            _result = dict(_result_by_idx.get(_winner_idx) or {})
+            _result["patch"] = _winner_patch
+            _result["gps_winner_reward"] = _winner.reward
+            _result["gps_winner_votes"] = _winner.consensus_votes
+
+        # The worktree currently holds whatever the LAST generated candidate
+        # left (or a reverted state). Reset to baseline and re-apply the
+        # winning patch so get_patch()/downstream post-processing see it.
+        if _multishot_repo_obj is not None and _winner_patch.strip():
             _multishot_revert(_multishot_repo_obj, _multishot_initial_head)
-        _remaining = _MULTISHOT_TOTAL_BUDGET - _elapsed
-        _attempt2_budget = max(30.0, _remaining - _MULTISHOT_MIN_ATTEMPT_RESERVE)
-        _bootstrap = build_attempt2_bootstrap(_result1, _n1)
-        _attempt1_blockers = _patch_ship_blockers(_patch1, _issue_text)
-        if _attempt1_blockers:
-            _bootstrap += (
-                "\nAttempt-1 ship blockers to fix on retry: "
-                + ", ".join(_attempt1_blockers)
-                + "\n"
-            )
-        _result2 = _solve_attempt(**{**kwargs, "_wall_clock_budget": _attempt2_budget, "_prior_attempt_summary": _bootstrap})
-        _patch2 = _result2.get("patch", "") or ""
-        _n2 = _multishot_count_substantive(_patch2)
-        _score1 = _patch_duel_score(_patch1, _issue_text)
-        _score2 = _patch_duel_score(_patch2, _issue_text)
+            _multishot_apply_patch(_multishot_repo_obj, _winner_patch)
 
-        if _score2 > _score1 or (_score2 == _score1 and _n2 >= _n1):
-            _result2["multishot_attempts"] = 2
-            _result2["multishot_winner"] = "retry"
-            _result2["multishot_score_primary"] = _score1
-            _result2["multishot_score_retry"] = _score2
-            return _finalize(_maybe_emergency(_result2, _multishot_started))
-
-        if _multishot_repo_obj is not None:
-            _multishot_revert(_multishot_repo_obj, _multishot_initial_head)
-        if _patch1 and _multishot_repo_obj is not None:
-            _multishot_apply_patch(_multishot_repo_obj, _patch1)
-        _result1["multishot_attempts"] = 2
-        _result1["multishot_winner"] = "primary"
-        return _finalize(_maybe_emergency(_result1, _multishot_started))
+        _result["gps_candidates"] = len(_candidate_pairs)
+        _result["gps_unique"] = len(_scored)
+        _result["gps_winner_idx"] = _winner_idx
+        _result["multishot_winner"] = "gps"
+        if not _result.get("patch", "").strip():
+            _result["patch"] = _winner_patch
+        _result["success"] = bool(_result.get("patch", "").strip())
+        return _finalize(_maybe_emergency(_result, _multishot_started))
 
     except Exception as exc:
         # EXCEPTION-PATH FIX: previously the exception handler returned empty
@@ -4252,10 +4980,12 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
             consecutive_model_errors = 0
             logs.append("MODEL_RESPONSE:\n" + response_text)
 
-            commands = extract_commands(response_text)
+            # IMPL-3: dispatch <command> and <edit> blocks in document order.
+            actions = extract_actions_in_order(response_text)
+            commands = [v for k, v in actions if k == "command"]
             final = extract_final(response_text)
 
-            if not commands:
+            if not actions:
                 if final is not None:
                     _final_patch = get_patch(repo)
                     if _final_patch.strip() and try_block_premature_success(_final_patch, response_text):
@@ -4285,18 +5015,26 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
             consecutive_no_command = 0
             messages.append({"role": "assistant", "content": response_text})
             observations: List[str] = []
-            command_batch = commands[:MAX_COMMANDS_PER_RESPONSE]
+            action_batch = actions[:MAX_COMMANDS_PER_RESPONSE]
 
-            for command_index, command in enumerate(command_batch, 1):
-                if _looks_like_verification_command(command):
-                    last_verification_step = step
-                result = run_command(command, repo, timeout=command_timeout)
+            for command_index, (kind, value) in enumerate(action_batch, 1):
+                if kind == "edit":
+                    # Structured edit: runs outside bash, cannot truncate or
+                    # silently no-op (IMPL-3). `command` left empty so the
+                    # command-only verification heuristics below skip it.
+                    command = ""
+                    result = execute_edit(value, repo)
+                else:
+                    command = value
+                    if _looks_like_verification_command(command):
+                        last_verification_step = step
+                    result = run_command(command, repo, timeout=command_timeout)
                 observation = format_observation(result)
 
-                observations.append(f"OBSERVATION {command_index}/{len(command_batch)}:\n{observation}")
-                logs.append(f"\nOBSERVATION {command_index}/{len(command_batch)}:\n" + observation)
+                observations.append(f"OBSERVATION {command_index}/{len(action_batch)}:\n{observation}")
+                logs.append(f"\nOBSERVATION {command_index}/{len(action_batch)}:\n" + observation)
 
-                if step >= 4 or command_index > 1:
+                if step >= 4 or command_index > 1 or kind == "edit":
                     patch = get_patch(repo)
                     if patch.strip() and _looks_like_successful_test_output(observation, command):
                         if maybe_queue_refinement(response_text):
@@ -4343,10 +5081,10 @@ def _solve_attempt(**kwargs: Any) -> Dict[str, Any]:
                         success = True
                         break
 
-            if len(commands) > len(command_batch):
+            if len(actions) > len(action_batch):
                 observations.append(
-                    f"NOTE: Only the first {len(command_batch)} command blocks were executed. "
-                    "Continue with one command at a time if more work remains."
+                    f"NOTE: Only the first {len(action_batch)} action blocks were executed. "
+                    "Continue with one action at a time if more work remains."
                 )
 
             if final is not None and get_patch(repo).strip():
