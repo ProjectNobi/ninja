@@ -2869,10 +2869,15 @@ def _build_completeness_task(issue_text: str, requirements: List[str]) -> str:
         + req_block + "\n\n"
         "Steps: (1) run `git diff` to see exactly what the current patch already "
         "does. (2) For EACH requirement above, confirm the diff addresses it; if "
-        "one is missing, add the minimal change that satisfies it. (3) Do NOT "
-        "refactor, rename, reorder, or touch anything the requirements do not "
-        "call for -- unrelated churn is penalized. Keep every existing correct "
-        "edit in place. (4) Re-verify syntax (`python3 -m py_compile` / "
+        "one is missing, add the minimal change that satisfies it. (3) Then audit "
+        "for INCOMPLETE coverage even where a requirement looks addressed: are "
+        "there edge cases, error conditions, empty/null/boundary inputs, or "
+        "failure paths the issue implies but the current diff does not yet "
+        "handle? Is every file or symbol the task names actually modified? Add "
+        "ONLY the minimal change to close a genuine gap. (4) Do NOT refactor, "
+        "rename, reorder, or touch anything the requirements do not call for -- "
+        "unrelated churn is penalized. Keep every existing correct edit in "
+        "place. (5) Re-verify syntax (`python3 -m py_compile` / "
         "`node --check`) before submitting.\n\n"
         "Original task:\n" + issue_text
     )
@@ -3197,7 +3202,24 @@ def solve(
                 comp_reason is None                       # patch already correct
                 and small_scope                           # winnable (small-file) only; no TO risk
                 and remaining >= 90.0                     # comfortable budget; no TO risk
-                and len(discrete_reqs) >= 2               # task has a real requirement set
+                # NEXT71 CHANGE (targeted coverage expansion): lower the
+                # requirement-count floor 2 -> 1. The N68 gate required >=2
+                # discrete (non-generic) requirements, which EXCLUDED small-file
+                # FEATURE tasks whose issue states a single clear feature
+                # requirement (T14: Python 2-file FEATURE, judge gap 0.060 -- the
+                # pass never fired because the FEATURE issue produced exactly one
+                # enumerable requirement). >=1 lets the pass fire on a single
+                # STRONG, currently-unaddressed requirement. ALL other safety
+                # gates are unchanged -- small_scope (<=2 source files AND not a
+                # >=5-extension large-repo task) and remaining >= 90s still bound
+                # this strictly to the winnable small-file cluster, so it adds
+                # ZERO timeout risk and CANNOT fire on the large-file loss
+                # cluster. `missing_reqs` still requires an actually-unaddressed
+                # requirement (no fire on already-complete patches), and the
+                # strict-monotone adoption guard below still forbids any
+                # coverage regression -- so this can only convert a partial
+                # small-file patch into a complete one, never degrade a win.
+                and len(discrete_reqs) >= 1               # >=1 strong requirement (was >=2)
                 and missing_reqs                          # >=1 requirement appears unaddressed
                 and outcome.patch.strip()
             ):

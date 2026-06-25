@@ -1,5 +1,51 @@
 #!/usr/bin/env python3
-"""Next41 -- strip to king purity: disable polish, remove checklist injection,
+"""Next70 -- tie-breaking SYSTEM_PROMPT enumeration rider on the proven Next68
+base. stdlib only; zero new imports.
+
+================================= NEXT70 (this version) =====================
+BASE: exact copy of agent_cl_gpt_Next68.py (the version that produced the
+competitive gate result N68: 17W-12L-1T, margin +5). Next68's machinery is kept
+VERBATIM -- the per-call request_timeout bound + max_attempts=1 drop at tight
+budget (NEXT68 CHANGE 2, the actual anti-SIGKILL mechanism), the 270s wall /
+30s reserve = 240s effective conservative budget (NEXT68 CHANGE 1), and the
+NARROW requirement-completeness coverage pass (NEXT68 CHANGE 3, gated on
+<=2-source-file winnable scope + >=1 term-absent requirement + >=90s budget).
+
+WHY NOT Next69: Next69 REGRESSED (killed at 16T, 4 challenger timeouts in
+T5/T7/T8/T14). The diff vs N68 shows THREE compounding causes:
+  (a) it DELETED the per-call request_timeout bound / max_attempts=1 drop --
+      removing the only mechanism that stops a 180s socket-timeout query from
+      retrying past the 300s live SIGKILL;
+  (b) it loosened the budget to 278s/10s = 268s effective (vs N68's 240s),
+      shrinking the return-path margin;
+  (c) it WIDENED the coverage-pass trigger to fire on any rich (three-or-more
+      discrete-requirement) task, so the pass also ran on heavy multi-requirement
+      tasks (PHP API T5, JS API T7, TS
+      BUGFIX T8) and burned extra wall-clock toward the SIGKILL.
+Next70 keeps Next68's (a)/(b)/(c) UNCHANGED -- the coverage trigger stays NARROW
+(>=1 term-absent requirement only, NOT >=3 discrete reqs).
+
+THE ONE NEW LEVER vs Next68 (network-analysis driven, ZERO timeout risk):
+Network duel data (king uid=169) shows our agents tie ~84% of rounds (38/45)
+while the closest dethroner uid=231 tied only ~34% (margin +5 over 50 rounds).
+Ties happen when both patches score within 2% -- our coverage pass only flips
+~5 decisive rounds. The lever that breaks ties WITHOUT adding any extra model
+pass (so zero SIGKILL risk) is a stronger SYSTEM_PROMPT: force the model to (1)
+ENUMERATE every distinct requirement/edge-case/named-file up front before the
+first edit, and (2) walk that numbered list one final time before submitting,
+adding the minimal change for any still-uncovered requirement. This pushes the
+SAME model toward more-complete patches inline, lifting our patch above the
+king's on the marginal requirement that decides a tie -- exactly the +0.04..0.08
+gaps seen in close losses T8/T10/T14/T20/T24. SYSTEM_PROMPT-only: no new code
+path, no extra wall-clock cost, no timeout risk. Three rider lines added to the
+king-verbatim SYSTEM_PROMPT (enumerate-up-front, modify-each-named-file,
+final-requirement-walk); everything else byte-identical to Next68.
+
+CI compliance preserved (no forbidden RNG token, no per-round-timeout env
+read, no bare 280/300/570 literal; valid syntax).
+
+----------------------------- historical (Next41 base) ----------------------
+Next41 -- strip to king purity: disable polish, remove checklist injection,
 remove language hints. Base is Next40 (2139 lines). stdlib only; zero new imports.
 
 ================================= NEXT41 (this version) =====================
@@ -223,11 +269,12 @@ The command runs in a fresh subshell at the repository root; directory changes
 and shell variables do not persist between turns. Chain with `&&` when needed.
 Never output more than one code block.
 
+Before your first edit, enumerate EVERY distinct requirement, behavior, edge case, and named file the task states -- write them as an explicit numbered list. A fix that satisfies only some of them loses; completeness across the full list is what wins.
 Wire every new symbol into its call sites; leave no stub, TODO, placeholder, pass, or unimplemented branch.
 Demonstrate the fix is correct: add a focused regression test that fails before your fix and passes after -- include it in your patch.
-Before your first edit, find the file that DEFINES or OWNS the behavior in the task (grep for definitions; if the task names a path, open that path) -- do not patch callers, tests, or wrappers by mistake.
+Before your first edit, find the file that DEFINES or OWNS the behavior in the task (grep for definitions; if the task names a path, open that path) -- do not patch callers, tests, or wrappers by mistake. If the task names several files or symbols, confirm your final diff modifies each one that the requirements actually depend on.
 On large or multi-file tasks, make your first edit within 4 steps; do not spend more than 3 steps reading before writing.
-Before submitting: re-read every edited region to confirm correctness and no unrelated edits; verify syntax (`python3 -m py_compile` for Python, `node --check` for JS/TS).
+Before submitting: re-read every edited region to confirm correctness and no unrelated edits; verify syntax (`python3 -m py_compile` for Python, `node --check` for JS/TS). Then walk your numbered requirement list one final time and confirm the diff visibly addresses EACH item -- if any requirement is not yet covered, add the minimal change that satisfies it before you finish.
 Output only valid source: no stray leading `n` from a broken newline, no literal `$1`/`$2` sed backreference, no duplicated function/method, no blank-line padding, no file-mode changes, and no backup/original copies (edit the real file in place).
 """
 # ^ NEXT27 CHANGE 2: hashirama's "Verify and Polish" syntax-check step, as a
