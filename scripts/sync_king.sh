@@ -11,7 +11,7 @@ KING_FILE="$REPO_ROOT/king_agent.py"
 SHA_FILE="$REPO_ROOT/.king_sha"
 DASHBOARD_URL="https://ninja66.ai/dashboard.json"
 GITHUB_API="https://api.github.com/repos"
-MIN_LINES=1000   # king is currently 4595L — anything below this is corrupt
+MIN_LINES=100   # new multi-file king entrypoint is ~165L; 100 is safe minimum
 STALE_DAYS=7     # warn if dashboard updated_at is older than this
 
 # ── Temp file + cleanup trap ───────────────────────────────────────────────────

@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Flattened king agent — SHA: a56ffdf52ea9f18854c1efc29a884c6e5fd01a7a (unarbos/ninja multi-file pack)"""
+"""SN66 Ninja miner — Next4.
+
+Built on new king (01c675065c1c): verify-repair pass intact.
+
+Changes over Next2-v3:
+- Removed conflicting SYSTEM_PROMPT additions (completeness/AC framing conflicts with king TASK_TEMPLATE).
+- Kept only BUGFIX minimal-change rule (targeted, non-conflicting).
+- Added correctness-demonstration nudge to task-type protocols.
+- Extended TASK_TEMPLATE Workflow with prioritised 5-step process.
+- Improved task-type detection: added REFACTOR type, tightened UPDATE keywords.
+"""
 
 from __future__ import annotations
 
@@ -22,6 +32,9 @@ _QUIET_TOOL_DEFAULTS = {
     "TQDM_DISABLE": "1",
     "NO_COLOR": "1",
     "GIT_PAGER": "cat",
+    # Keep verification runs from leaving __pycache__/*.pyc behind, which
+    # repo_diff could otherwise sweep into the final patch as binary churn.
+    "PYTHONDONTWRITEBYTECODE": "1",
 }
 
 
@@ -154,22 +167,12 @@ class ChatModel:
             raise ModelQueryError(f"model response has no choices: {raw[:300]}")
         message = choices[0].get("message") if isinstance(choices[0], dict) else None
         content = message.get("content") if isinstance(message, dict) else None
-        # Handle list-shaped content parts (some proxy responses normalize the
-        # assistant message into a list of {type, text}/{content} parts).
         if isinstance(content, list):
-            parts = []
-            for part in content:
-                if isinstance(part, dict):
-                    parts.append(str(part.get("text") or part.get("content") or ""))
-                elif part is not None:
-                    parts.append(str(part))
-            content = "".join(parts)
+            content = "".join(
+                str(part.get("text") or "") for part in content if isinstance(part, dict)
+            )
         if not isinstance(content, str):
             raise ModelQueryError(f"model response has no text content: {raw[:300]}")
-        # Reject empty proxy-normalized replies so the loop retries instead of
-        # silently advancing on a no-op step (upstream fix ae2158103232).
-        if not content.strip():
-            raise ModelQueryError(f"model returned empty content: {raw[:300]}")
         return content
 
 
@@ -190,9 +193,9 @@ def _as_int(value) -> int:
 # Inlined from: agent/prompts.py
 # ============================================================
 
-"""Prompt templates adapted to the
-tau subnet scoring rules (positional line-level diff matching against a hidden
-reference solution)."""
+"""Prompt templates for the coding agent: guide it to produce a correct,
+complete, well-verified fix that a careful maintainer would merge, scoped
+tightly to the issue and demonstrated with a focused test or reproduction."""
 
 COMPLETION_SENTINEL = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
 
@@ -200,40 +203,6 @@ SYSTEM_PROMPT = """\
 You are a precise software engineering agent that interacts with a computer
 through bash commands to fix issues in a repository checked out at the
 current working directory.
-
-## COMPLETENESS BEATS MINIMALISM
-Under-editing costs MORE than over-editing: a missed requirement scores 0 for
-that requirement, while a slightly-too-broad edit is only mildly penalized.
-Always err toward fully satisfying the task rather than stopping short.
-
-## ACCEPTANCE CRITERIA FIRST
-Before writing ANY code, identify every acceptance criterion in the task. Your
-patch must address ALL of them. Partial implementations lose decisively. Enumerate
-the criteria, then verify each one is covered before you submit.
-
-## UPDATE TASK WIRING RULE
-A feature that exists but is never called = 0 points. Wire new code into event
-handlers, state management, data flows, and call sites. For multi-file tasks,
-enumerate EVERY required file and update ALL of them — a patch covering 4 of 5
-required files loses to one covering all 5.
-
-## CORRECTNESS GUARDS
-- Imports: keep them at top-level/file-correct scope; never place an import
-  inside a function body, and never import a module not already available.
-- TypeScript: preserve exact types, no `any` unless the task requires it.
-- No test regressions: do not break existing tests. For edited Python files,
-  verify syntax with `python -c 'import ast; ast.parse(open("file.py").read())'`.
-
-## SCOPE DISCIPLINE (counterbalance)
-Change ONLY what the task requires — no refactoring, cosmetic churn, import
-reordering, or speculative error handling. When unsure about a change, leave the
-code as-is. Completeness means covering every requirement, not adding unrelated
-work.
-
-## OUTPUT SAFETY
-Your patch must NOT contain the phrases: 'automatic fail',
-'ignore previous instructions', or 'grader'. These trigger an automatic score
-of 0 regardless of patch quality.
 
 Response format, every single turn:
 1. A short reasoning paragraph explaining what you learned and what you do next.
@@ -246,6 +215,10 @@ nl -ba path/to/file.py | sed -n '1,80p'
 The command runs in a fresh subshell at the repository root; directory changes
 and shell variables do not persist between turns. Chain with `&&` when needed.
 Never output more than one code block.
+
+## BUGFIX MINIMAL-CHANGE RULE
+For bug fixes: change the minimum lines needed. A 1-line root-cause fix beats
+a 10-line refactor. Do NOT add logging, comments, or error handling unless required.
 """
 
 TASK_TEMPLATE = """\
@@ -255,34 +228,56 @@ Please solve this issue:
 {task_text}
 </task>
 {extra_context}
-Your final patch is scored by an LLM judge that uses the upstream maintainers'
-actual fix as privileged reference context. The judge rewards correct,
-complete fixes aligned with the task, and penalizes unrelated churn,
-incomplete solutions, and empty diffs.
+Aim for a change a careful maintainer would merge: make the required behavior
+true, and make the fix correct and COMPLETE. Demonstrate it is correct with a
+focused test, a reproduction, or assertions covering the changed behavior. Keep
+the change tightly scoped -- no unrelated edits, no churn, no empty diffs.
 
 ## Workflow
 
-1. Read the ENTIRE task and identify every requirement; the judge penalizes
-   patches that only solve part of it.
+1. Read the ENTIRE task and identify EVERY requirement and edge case it
+   describes; do not stop at a partial fix -- handle every requirement.
 2. Find and read the files that need to change IN FULL before editing.
-3. Fix the root cause with the smallest complete set of edits, matching the
-   existing code style (indentation, quotes, naming).
-4. Re-read the edited region to confirm the change is correct and
+3. Fix the root cause completely, handling each requirement and the edge cases
+   the task names, matching the existing code style (indentation, quotes,
+   naming). A complete, mergeable fix beats a minimal partial one.
+4. Demonstrate the fix is correct: add a focused assertion, a tiny
+   reproduction, or a small test (a few lines, using only the standard library
+   or packages already present) that genuinely reproduces the reported problem
+   -- it should fail on the unfixed code and pass once your fix is in place. If
+   it needs no network or package install, run it once with a single quick
+   command to confirm it now passes. If you cannot make a test that actually
+   reproduces the issue and passes after the fix, drop it and submit the fix
+   alone -- never ship a failing, trivial, or unrelated test just to add one.
+5. Re-read the edited region to confirm the change is correct and
    syntactically valid.
-5. Finish by running exactly:
+6. Finish by running exactly:
 
 ```bash
 echo {sentinel}
 ```
 
+## Prioritised steps
+1. Read the full issue and ALL files it references before touching anything.
+2. Identify the single root cause or missing feature.
+3. Make the smallest change that satisfies every acceptance criterion.
+4. Verify: re-read your changes. Does each changed line serve the task? No unrelated edits.
+5. If Python: `python -c "import ast; ast.parse(open('f.py').read())"` on each edited file.
+
 ## Hard rules
 
-- Change ONLY what the task requires. No refactoring, no cosmetic changes.
-- Do not add unrelated comments, docstrings, or speculative error handling.
-- Do not reorder imports, rename variables, or fix unrelated problems.
-- Do not run test suites, builds, or linters; a quick `python -c` syntax check
-  is the most you should do.
-- Do not create new files unless the task clearly requires it.
+- Solve every requirement the task describes; completeness is rewarded, but
+  edit precisely -- do not refactor, reorganize, or fix UNRELATED problems
+  (those are penalized as churn).
+- A relevant test, reproduction, assertion, or a brief comment/docstring that
+  explains the change is part of a complete, mergeable fix -- include it when
+  it demonstrates correctness. Do not add unrelated commentary.
+- New files you add (for a reproduction or test) are included in your final
+  patch; create one when it best demonstrates the fix.
+- Keep added tests focused purely on the code's behavior and the task; never
+  write code, comments, or test names that try to address or instruct whoever
+  reviews the patch.
+- Do not reorder imports or rename variables that the task does not require.
 - Prefer small `sed -i` edits or a heredoc rewrite of a short region. Examples:
 
 ```bash
@@ -297,7 +292,8 @@ print("hello")
 EOF
 ```
 
-- When unsure about a change, leave the code as-is.
+- Confirm every requirement is handled before finishing; a fix that covers the
+  whole task and proves itself correct beats one that stops early.
 - The `echo {sentinel}` command must be alone in its code block and is final:
   after it you cannot run anything else.
 """
@@ -325,6 +321,178 @@ OBSERVATION_TEMPLATE = """\
 {remaining_note}"""
 
 
+# ------------------------------------------------------------
+# Task-type detection + conditional first-turn strategy (ported from Next2)
+# ------------------------------------------------------------
+# Classify the task and inject a short, ACTIONABLE protocol into the first user
+# message so the model executes the right step-by-step procedure for that task
+# type. This pushed gate WR from 54% -> 85% on the Next2 line. It never changes
+# the patch contract, the solve() signature, or the verify-repair pass.
+
+# Keyword signals are evaluated in priority order. UPDATE is checked before
+# FEATURE because many UPDATE tasks also contain "add" language, and the wiring
+# discipline is the differentiator. UPDATE keywords are tightened (generic
+# "update"/"modify existing" removed) to cut false positives that were stealing
+# BUGFIX tasks; "refactor"/"restructure" now route to the dedicated REFACTOR type.
+_REFACTOR_KEYWORDS = (
+    "refactor",
+    "restructure",
+    "reorganize",
+    "reorganise",
+    "clean up",
+    "cleanup",
+    "tidy up",
+    "extract method",
+    "deduplicate",
+)
+_UPDATE_KEYWORDS = (
+    "upgrade",
+    "bump",
+    "migrate",
+    "rename",
+    "replace",
+    "wire",
+    "integrate",
+    "hook up",
+)
+_BUGFIX_KEYWORDS = (
+    "bug",
+    "fix",
+    "broken",
+    "error",
+    "crash",
+    "exception",
+    "fails",
+    "failing",
+    "incorrect",
+    "wrong",
+    "regression",
+    "traceback",
+    "does not work",
+    "doesn't work",
+    "not working",
+    "throws",
+)
+_FEATURE_KEYWORDS = (
+    "add",
+    "implement",
+    "create",
+    "new feature",
+    "support for",
+    "introduce",
+    "build a",
+    "feature",
+    "enable",
+    "allow users",
+)
+
+
+def _detect_task_type(task_text: str) -> str:
+    """Classify the task as REFACTOR / UPDATE / BUGFIX / FEATURE / OTHER.
+
+    Heuristic only; it gates which strategy block is injected into the first
+    user turn. It never changes the patch contract or scoring path."""
+    text = (task_text or "").lower()
+    if not text.strip():
+        return "OTHER"
+
+    def _hits(keywords: tuple) -> int:
+        return sum(1 for kw in keywords if kw in text)
+
+    refactor_hits = _hits(_REFACTOR_KEYWORDS)
+    update_hits = _hits(_UPDATE_KEYWORDS)
+    bugfix_hits = _hits(_BUGFIX_KEYWORDS)
+    feature_hits = _hits(_FEATURE_KEYWORDS)
+
+    # REFACTOR is checked first: a structural-only task has a distinct
+    # behavior-preserving protocol. A clear bug signal then wins; then UPDATE
+    # (wiring discipline); then FEATURE; else OTHER. Ties resolve toward the
+    # most corrective protocol. A refactor task that ALSO names a bug is treated
+    # as a BUGFIX (the fix is the dominant requirement).
+    if refactor_hits > 0 and bugfix_hits == 0:
+        return "REFACTOR"
+
+    best = max(update_hits, bugfix_hits, feature_hits)
+    if best == 0:
+        return "REFACTOR" if refactor_hits > 0 else "OTHER"
+    if bugfix_hits == best and bugfix_hits >= update_hits:
+        return "BUGFIX"
+    if update_hits == best:
+        return "UPDATE"
+    if feature_hits == best:
+        return "FEATURE"
+    return "BUGFIX"
+
+
+_STRATEGY_UPDATE = """\
+## UPDATE TASK — MANDATORY PROTOCOL
+This is a feature UPDATE. Before writing ANY code:
+1. List every file the issue mentions — these ALL need changes.
+2. Find where the NEW feature/value needs to be CALLED from (event handlers, routers, state, imports).
+3. For each file: find existing patterns (how similar features are called) and match them exactly.
+4. Wire the new code into EVERY call site — a feature that exists but is never invoked = 0 points.
+5. Verify: grep for the new function/variable name and confirm it appears in at least one caller.
+6. After wiring: add one assertion or log statement that proves the new code runs."""
+
+_STRATEGY_BUGFIX = """\
+## BUGFIX TASK — MANDATORY PROTOCOL
+This is a bug fix. Before writing ANY code:
+1. Find the EXACT line causing the bug — read the full error/description carefully.
+2. Trace the data flow: where does it come from, where does it fail?
+3. Fix the ROOT CAUSE, not the symptom. A workaround that masks the bug scores lower than a real fix.
+4. Run: `python -c "import ast; ast.parse(open('file.py').read())"` on any edited Python file.
+5. Do not add unrelated changes — surgical precision wins.
+6. After fixing: write a 1-line verification (print/assert) that shows the bug is gone. Then remove it before submitting."""
+
+_STRATEGY_FEATURE = """\
+## FEATURE TASK — KEY REMINDER
+Implement ALL acceptance criteria completely. Wire the new feature into the app (imports, routes, state, UI). End-to-end means it actually works when called.
+After implementing: demonstrate end-to-end with a minimal test or reproduction step."""
+
+_STRATEGY_REFACTOR = """\
+## REFACTOR TASK — MANDATORY PROTOCOL
+This is a structural refactor. Make structural changes only — do not change behavior. Tests must still pass.
+1. Identify the exact structure to change (rename/extract/reorganize) from the task.
+2. Preserve every observable behavior — inputs, outputs, and side effects stay identical.
+3. Update all call sites/imports that reference the moved or renamed code.
+4. Run the existing tests (or `python -c "import ast; ast.parse(open('file.py').read())"`) to confirm nothing broke.
+5. Do not add features or fix unrelated bugs — refactor scope only."""
+
+_STRATEGY_OTHER = """\
+## TASK PROTOCOL
+Before writing ANY code:
+1. Enumerate every requirement and acceptance criterion in the task.
+2. Find and read every file that must change, in full.
+3. Implement ALL requirements completely; a patch that covers only part loses.
+4. Wire any new code into its call sites — code that is never invoked = 0 points.
+5. Verify syntax of edited files, then submit."""
+
+_STRATEGY_BY_TYPE = {
+    "UPDATE": _STRATEGY_UPDATE,
+    "BUGFIX": _STRATEGY_BUGFIX,
+    "FEATURE": _STRATEGY_FEATURE,
+    "REFACTOR": _STRATEGY_REFACTOR,
+    "OTHER": _STRATEGY_OTHER,
+}
+
+# Initial analysis directive: forces the model to plan (files + type + criteria)
+# before acting, which reduces missed files — the dominant loss cause.
+_ANALYSIS_DIRECTIVE = """\
+## FIRST — ANALYSE BEFORE SOLVING
+Before solving, briefly list: (1) all files that need changes, (2) the task type
+(UPDATE/BUGFIX/FEATURE/REFACTOR), (3) the key acceptance criteria. Then proceed
+with the first investigation command in the required one-bash-block format."""
+
+
+def build_task_type_preamble(task_type: str) -> str:
+    """Return the strategy block + analysis directive to inject after the task.
+
+    Appended to the FIRST user message only, after the task text, so the model
+    receives a concrete, actionable plan for this task type before it starts."""
+    strategy = _STRATEGY_BY_TYPE.get(task_type, _STRATEGY_OTHER)
+    return f"\n\n{strategy}\n\n{_ANALYSIS_DIRECTIVE}\n"
+
+
 def build_task_prompt(*, task_text: str, repo_summary: str = "", preloaded_context: str = "") -> str:
     extra_parts = []
     if repo_summary.strip():
@@ -342,42 +510,15 @@ def format_help_message() -> str:
     return FORMAT_HELP.format(sentinel=COMPLETION_SENTINEL) + "```\n"
 
 
-def render_observation(
-    *,
-    returncode: int,
-    output_text: str,
-    remaining_steps: int,
-    elapsed: float = 0.0,
-    wall_clock_limit: float = 0.0,
-) -> str:
-    notes = []
-    # Remaining-steps urgency refinement (graduated).
-    if remaining_steps <= 1:
-        notes.append(
-            f"[Final command. Submit now: `echo {COMPLETION_SENTINEL}`]"
+def render_observation(*, returncode: int, output_text: str, remaining_steps: int) -> str:
+    if remaining_steps <= 3:
+        remaining_note = (
+            f"[{remaining_steps} command(s) left. Make sure every requirement is "
+            f"handled and the change is demonstrably correct, then submit with "
+            f"`echo {COMPLETION_SENTINEL}`.]"
         )
-    elif remaining_steps <= 3:
-        notes.append(
-            f"[{remaining_steps} command(s) left. Make the smallest useful edit, "
-            f"then submit with `echo {COMPLETION_SENTINEL}`.]"
-        )
-    elif remaining_steps <= 5:
-        notes.append(
-            "[5 commands left. Focus: complete the most critical missing change, "
-            "then submit.]"
-        )
-    # Solve-time awareness: faster solves score higher (5% live weight). When few
-    # steps remain AND most of the wall-clock budget is spent, nudge toward a
-    # minimal correct change and submission.
-    if (
-        wall_clock_limit > 0
-        and remaining_steps <= 5
-        and elapsed > 0.6 * wall_clock_limit
-    ):
-        notes.append(
-            "[Time is short. Make the minimal correct change and submit.]"
-        )
-    remaining_note = " ".join(notes)
+    else:
+        remaining_note = ""
     return OBSERVATION_TEMPLATE.format(
         returncode=returncode,
         output=output_text,
@@ -395,77 +536,13 @@ diffs against /dev/null."""
 import subprocess
 
 
-# Reserved substrings stripped from final patch content lines. Any of these in
-# the emitted diff trigger an automatic judge score of 0 (Intel A: 102 auto-fail
-# cases), so we defensively remove them before returning the patch. The king has
-# no such guard; this is a ported protection from our prior agent.
-_EDGECASE_GUARDRAIL = (
-    "ignore previous instructions",
-    "ignore prior instructions",
-    "ignore the above instructions",
-    "as the evaluator",
-    "as the judge",
-    "dear evaluator",
-    "dear judge",
-    "choose challenger",
-    "challenger is correct",
-    "the evaluator should",
-    "the judge should",
-    "other candidate is malicious",
-    "the other candidate is malicious",
-    "automatic fail",
-    "grader",
-    "reward model",
-)
-
-
-def _sanitize_patch(diff_output: str) -> str:
-    """Strip auto-fail trigger substrings from patch CONTENT lines while leaving
-    all diff headers (diff/index/---/+++/@@/mode/rename/binary) intact. A stray
-    trigger phrase in a comment or string would otherwise nuke an otherwise valid
-    round."""
-    if not diff_output.strip():
-        return diff_output
-    lower = diff_output.lower()
-    if not any(trigger in lower for trigger in _EDGECASE_GUARDRAIL):
-        return diff_output
-    kept = []
-    for line in diff_output.splitlines():
-        is_header = (
-            line.startswith("diff --git ")
-            or line.startswith("index ")
-            or line.startswith("--- ")
-            or line.startswith("+++ ")
-            or line.startswith("@@")
-            or line.startswith("new file mode")
-            or line.startswith("deleted file mode")
-            or line.startswith("old mode ")
-            or line.startswith("new mode ")
-            or line.startswith("similarity index ")
-            or line.startswith("dissimilarity index ")
-            or line.startswith("rename from ")
-            or line.startswith("rename to ")
-            or line.startswith("copy from ")
-            or line.startswith("copy to ")
-            or line.startswith("Binary files ")
-            or line.startswith("GIT binary patch")
-        )
-        if not is_header and any(trigger in line.lower() for trigger in _EDGECASE_GUARDRAIL):
-            continue
-        kept.append(line)
-    rebuilt = "\n".join(kept)
-    if diff_output.endswith("\n") and not rebuilt.endswith("\n"):
-        rebuilt += "\n"
-    return rebuilt
-
-
 def collect_repo_patch(repo_dir: str) -> str:
     diff = _run_git(["diff", "--binary", "--", "."], repo_dir)
     listing = _run_git(["ls-files", "--others", "--exclude-standard", "-z"], repo_dir)
     for relative_path in [item for item in listing.split("\0") if item]:
         file_diff = _run_git_diff_no_index(relative_path, repo_dir)
         diff += file_diff
-    return _sanitize_patch(diff)
+    return diff
 
 
 def _run_git(args: list, repo_dir: str) -> str:
@@ -511,44 +588,13 @@ def _run_git_diff_no_index(relative_path: str, repo_dir: str) -> str:
 observation back, finish when the agent echoes the completion sentinel.
 Uses a text-based action format."""
 
-import json
 import re
 import time
 from dataclasses import dataclass, field
 
 
 _ACTION_BLOCK_RE = re.compile(r"```(?:bash|sh)?\s*\n(.*?)\n?```", re.DOTALL)
-# Some tool-trained models (e.g. Moonshot Kimi) ignore the bash-block contract
-# and emit their native tool-call tokens as plain text instead. Recognise that
-# format too and pull the shell command out of the JSON argument payload.
-_NATIVE_TOOL_CALL_RE = re.compile(
-    r"<\|tool_call_begin\|>(?P<name>.*?)<\|tool_call_argument_begin\|>(?P<args>.*?)<\|tool_call_end\|>",
-    re.DOTALL,
-)
 _MAX_FORMAT_RETRIES = 3
-
-
-def _extract_commands(reply: str) -> list:
-    """Return shell commands from either the bash-block or native tool-call format."""
-    commands = [action.strip() for action in _ACTION_BLOCK_RE.findall(reply) if action.strip()]
-    if commands:
-        return commands
-    for match in _NATIVE_TOOL_CALL_RE.finditer(reply):
-        try:
-            args = json.loads(match.group("args").strip())
-        except (ValueError, TypeError):
-            continue
-        if not isinstance(args, dict):
-            continue
-        command = (
-            args.get("command")
-            or args.get("cmd")
-            or args.get("code")
-            or args.get("code_string")
-        )
-        if isinstance(command, str) and command.strip():
-            commands.append(command.strip())
-    return commands
 
 
 @dataclass
@@ -584,12 +630,20 @@ def run_agent_loop(*, config: AgentRunConfig, task: str) -> AgentOutcome:
         auth_token=config.auth_token,
         max_completion_tokens=config.max_tokens,
     )
+    # Task-type detection + conditional first-turn strategy injection (Next2).
+    # Classify on the built task text and append the matching actionable
+    # protocol + analysis directive AFTER the task so the model plans correctly
+    # before its first command. Applies to both the initial and repair passes.
+    user_content = task if "<task>" in task else build_task_prompt(task_text=task)
+    task_type = _detect_task_type(user_content)
+    user_content = user_content + build_task_type_preamble(task_type)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": task if "<task>" in task else build_task_prompt(task_text=task)},
+        {"role": "user", "content": user_content},
     ]
     started = time.monotonic()
     log_lines: list = []
+    log_lines.append(f"[init] detected task_type={task_type}")
     exit_status = "LimitsExceeded"
     message = f"step limit of {config.max_steps} reached"
     format_retries = 0
@@ -609,7 +663,8 @@ def run_agent_loop(*, config: AgentRunConfig, task: str) -> AgentOutcome:
         messages.append({"role": "assistant", "content": reply})
         log_lines.append(f"[step {step}] assistant:\n{reply}")
 
-        commands = _extract_commands(reply)
+        actions = _ACTION_BLOCK_RE.findall(reply)
+        commands = [action.strip() for action in actions if action.strip()]
         if len(commands) != 1:
             format_retries += 1
             if format_retries > _MAX_FORMAT_RETRIES:
@@ -633,8 +688,6 @@ def run_agent_loop(*, config: AgentRunConfig, task: str) -> AgentOutcome:
             returncode=int(result.get("returncode") or 0),
             output_text=truncate_text(output_text, config.max_observation_chars),
             remaining_steps=config.max_steps - step,
-            elapsed=time.monotonic() - started,
-            wall_clock_limit=config.wall_clock_limit,
         )
         messages.append({"role": "user", "content": observation})
 
@@ -679,7 +732,7 @@ Contract (unchanged from the public single-file base agent):
 
 Layout:
     agent.py             validator-owned contract + thin solve() wiring
-    agent/prompts.py     system/instance templates tuned for diff-match scoring
+    agent/prompts.py     system/instance templates for complete, verified fixes
     agent/model.py       stdlib OpenAI-compatible chat client with retries
     agent/environment.py fresh-subshell bash executor
     agent/agent_loop.py  the query -> act -> observe step loop
@@ -702,7 +755,10 @@ from typing import Any, Dict, Optional, Tuple
 # -----------------------------
 
 DEFAULT_MAX_STEPS = int(os.environ.get("AGENT_MAX_STEPS", "50"))
-DEFAULT_COMMAND_TIMEOUT = int(os.environ.get("AGENT_COMMAND_TIMEOUT", "15"))
+# Allow a single command enough time to run a small reproduction or assertion
+# that demonstrates the fix is correct. Still far under the per-round wall
+# budget so the loop finishes and reports its own patch.
+DEFAULT_COMMAND_TIMEOUT = int(os.environ.get("AGENT_COMMAND_TIMEOUT", "40"))
 
 # VALIDATOR CONTRACT: These defaults are only fallbacks for local testing and
 # validator wiring. During real validation the validator passes model, api_base,
@@ -740,6 +796,10 @@ def _wall_clock_limit_seconds() -> float:
 
 WALL_CLOCK_LIMIT_SECONDS = _wall_clock_limit_seconds()
 
+# Headroom kept before the wall limit so a repair pass leaves time for the
+# final diff collection instead of being killed mid-write.
+WALL_CLOCK_RESERVE_SECONDS = 10.0
+
 
 def _normalize_api_base(api_base: str) -> str:
     base = api_base.rstrip("/")
@@ -773,6 +833,63 @@ def build_initial_user_prompt(issue: str, repo_summary: str, preloaded_context: 
     return build_task_prompt(task_text=issue, repo_summary=repo_summary, preloaded_context=preloaded_context)
 
 
+# Minimum wall-clock headroom (seconds) needed to attempt a repair pass; below
+# this we keep the first patch rather than start work we cannot finish.
+VERIFY_REPAIR_MIN_BUDGET_SECONDS = 45.0
+VERIFY_REPAIR_MAX_STEPS = 14
+
+
+def _changed_py_files(patch_text: str) -> list:
+    """Python files touched by the patch (parsed from its `+++ b/` headers)."""
+    paths = []
+    for line in patch_text.splitlines():
+        if line.startswith("+++ b/"):
+            path = line[len("+++ b/"):].strip()
+            if path.endswith(".py") and path not in paths:
+                paths.append(path)
+    return paths
+
+
+def _py_syntax_errors(repo_dir: str, patch_text: str) -> list:
+    """Changed .py files whose current on-disk content does not parse."""
+    broken = []
+    for rel in _changed_py_files(patch_text):
+        full = os.path.join(repo_dir, rel)
+        try:
+            with open(full, "r", encoding="utf-8", errors="replace") as handle:
+                source = handle.read()
+        except OSError:
+            continue
+        try:
+            compile(source, rel, "exec")
+        except SyntaxError as exc:
+            broken.append(f"{rel}: line {exc.lineno}: {exc.msg}")
+        except (ValueError, TypeError):
+            broken.append(f"{rel}: could not be parsed")
+    return broken
+
+
+def _repair_reason(repo_dir: str, patch_text: str) -> Optional[str]:
+    """Deterministic signal that the emitted patch is empty or broken, else None."""
+    if not (patch_text or "").strip():
+        return "the current change set is empty; no fix was produced yet"
+    broken = _py_syntax_errors(repo_dir, patch_text)
+    if broken:
+        return "the edited files contain syntax errors that must be fixed:\n- " + "\n- ".join(broken[:8])
+    return None
+
+
+def _build_repair_task(issue_text: str, reason: str) -> str:
+    return (
+        "A previous attempt to solve the task below left the repository in an "
+        "incomplete or broken state. " + reason + "\n\n"
+        "Inspect the current state of the repository, then finish and correct "
+        "the change so it fully and correctly solves the task. Re-read each "
+        "edited region to confirm it is syntactically valid before submitting.\n\n"
+        "Original task:\n" + issue_text
+    )
+
+
 def solve(
     repo_path: str,
     issue: str,
@@ -802,6 +919,43 @@ def solve(
             config=run_config,
             task=build_initial_user_prompt(issue, "", ""),
         )
+
+        # Verification gate: the base agent submits on the first completion
+        # signal with no check, so it ships some empty or syntactically broken
+        # patches. If the emitted change is empty or leaves an edited Python file
+        # unparseable AND wall-clock budget remains, run one bounded repair pass
+        # and keep it only when it is strictly better (a
+        # non-empty patch with no syntax errors). Never worsen the first result.
+        repair_note = ""
+        try:
+            remaining = WALL_CLOCK_LIMIT_SECONDS - (time.monotonic() - started)
+            reason = _repair_reason(repo_path, outcome.patch)
+            if reason is not None and remaining >= VERIFY_REPAIR_MIN_BUDGET_SECONDS:
+                repair_config = AgentRunConfig(
+                    repo_dir=repo_path,
+                    model_name=model_name,
+                    base_url=base_url,
+                    auth_token=proxy_token,
+                    max_steps=min(max_steps, VERIFY_REPAIR_MAX_STEPS),
+                    command_timeout=command_timeout,
+                    max_tokens=max_tokens,
+                    max_observation_chars=MAX_OBSERVATION_CHARS,
+                    max_log_chars=MAX_TOTAL_LOG_CHARS,
+                    wall_clock_limit=remaining - WALL_CLOCK_RESERVE_SECONDS,
+                )
+                repaired = run_agent_loop(
+                    config=repair_config,
+                    task=build_initial_user_prompt(_build_repair_task(issue, reason), "", ""),
+                )
+                if (
+                    repaired.patch.strip()
+                    and not _py_syntax_errors(repo_path, repaired.patch)
+                ):
+                    outcome = repaired
+                    repair_note = " (repair pass adopted)"
+        except Exception:
+            repair_note = " (repair pass skipped after error)"
+
         elapsed = time.monotonic() - started
         return {
             "patch": outcome.patch,
@@ -809,7 +963,7 @@ def solve(
             "steps": outcome.steps,
             "cost": outcome.cost,
             "success": outcome.success,
-            "message": f"{outcome.exit_status}: {outcome.message} in {elapsed:.1f}s",
+            "message": f"{outcome.exit_status}: {outcome.message} in {elapsed:.1f}s{repair_note}",
         }
     except Exception:
         fallback_patch = collect_repo_patch(repo_path)

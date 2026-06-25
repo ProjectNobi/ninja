@@ -9,20 +9,17 @@
 | Item | Value |
 |------|-------|
 | **King sync** | `cd /root/sn66-ninja && bash scripts/sync_king.sh && wc -l king_agent.py` |
-| **Gate command** | `cd /root/sn66-ninja && bash scripts/gate.sh --challenger AGENT.py --tasks 30 --seed 42 --parallel 2 --timeout 300` |
-| **Gate (auto-sync)** | `bash scripts/gate.sh --auto-sync --challenger AGENT.py --tasks 30 --seed 42 --parallel 2 --timeout 300` — syncs king then re-verifies on mismatch |
-| **⛔ Gate hard-block** | `gate.sh` HARD-BLOCKS (exit 1) if live king SHA (ninja66.ai/dashboard.json) ≠ local `.king_sha`. NEVER run `validator_harness_v7.py` directly — it has no hard king gate. Use `--auto-sync` to auto-fix. (H4 fix 2026-06-16, L-SN66-KING-SYNC-PIPELINE-1) |
+| **Gate command** | `python3 -u validator_harness_v6.py --challenger AGENT.py --king king_agent.py --tasks 50 --seed 42 --parallel 3 --timeout 600` |
 | **Gate threshold** | ≥60% decisive WR on 50 tasks |
 | **Gate session** | ALWAYS in tmux — `tmux new-session -d -s sn66_vNEXT_gate` |
-| **Judge (Phase 1)** | `anthropic/claude-sonnet-4.6` → `moonshotai/kimi-k2.6` fallback — live-accurate (v7) |
+| **Judge (Phase 1)** | `anthropic/claude-sonnet-4.6` — 100% LLM, no cursor_sim weight |
 | **Win margin** | challenger_wins - challenger_losses > 3 |
 | **Base rule** | `cp king_agent.py agent_vNext.py` — ALWAYS start from king |
 | **PR #40** | https://github.com/unarbos/tau/pull/40 (blind judge fix) |
-| **Blind judge** | SHA256-deterministic A/B (v7) — labels "PATCH A/B" only, reproducible |
-| **Timeout** | --timeout 300 (v7 default; use 600 if king is known multishot) |
+| **Blind judge** | FIX 8 in harness v6 (commit 81289db) — labels "PATCH A/B" only |
+| **Timeout** | --timeout 600 (king is multishot — never use 300s) |
 | **CI submission** | King-base + minimum additions → CI 78. Any divergence lowers CI. |
 | **Auto-submit** | NEVER — always get James's explicit approval first |
-| **🛡️ Burn guard** | `cd /root/sn66-ninja && bash scripts/burn_guard.sh` — MANDATORY before ANY hotkey registration / `burned_register` / submission. Exit 0 = proceed, exit 1 = BLOCKED (3+ consecutive duel losses OR T68Coldkey balance < τ0.25). H5 fix 2026-06-16. |
 | **Private repo** | ProjectNobi/sn66-miners only |
 
 ### Key Thresholds (current)
@@ -32,7 +29,7 @@
 
 ### Critical Lessons (fast lookup)
 - **L-SN66-KING-BASE-MANDATORY-1**: ALWAYS start from current `king_agent.py` — no exceptions
-- **L-SN66-BLIND-JUDGE-1**: Blind A/B labels in harness — SHA256-deterministic in v7, never reveal king/challenger
+- **L-SN66-BLIND-JUDGE-1**: Blind A/B labels in harness (FIX 8) — never reveal king/challenger
 - **L-SN66-NEVER-DELETE-RULE-1**: Never add "never delete existing functions" to SYSTEM_PROMPT
 - **L-SN66-CI-VBASE-MATTERS-1**: King-base → CI 78; v62b divergence → CI 62
 - **L-SN66-CI-HOTKEY-SPENT-1**: CI failed (≤62) = hotkey reusable; CI passed (≥72) = hotkey spent
@@ -106,9 +103,9 @@ Deep-study `king_agent.py`. Extract:
 > Confirmed: king-base → CI 78 on first attempt. v62b/other base → CI 62 ❌ after 9 attempts.
 
 **1d — Scoring Mechanism Validation** (Opus 4.7, ~10min)
-Verify current scoring formula from harness v7. Confirm: **single or dual LLM judges**, judge model(s), win_margin, formula.
+Verify current scoring formula from harness v6. Confirm: **single or dual LLM judges**, judge model(s), win_margin, formula.
 ```bash
-grep -n "JUDGE_MODEL\|JUDGE_MODEL_2\|_DIFF_JUDGE_WEIGHT\|win_margin\|cursor_sim\|dual\|consensus" validator_harness_v7.py
+grep -n "JUDGE_MODEL\|JUDGE_MODEL_2\|_DIFF_JUDGE_WEIGHT\|win_margin\|cursor_sim\|dual\|consensus" validator_harness_v6.py
 ```
 - **Phase 1 (NOW):** Single judge — `anthropic/claude-sonnet-4.6`, win_margin=3, cursor_sim=telemetry only (PR#1598)
 - **Phase 2 (next week):** Dual judges — `anthropic/claude-sonnet-4.6` + `openai/gpt-5.4`, consensus wins
@@ -144,7 +141,7 @@ Analyze: WR vs current king, which task types we lose most, round score patterns
 - **Output:** `research/LIVE_DUEL_STATE_SN66_vNEXT.md`
 
 **1f — Harness + Task Selection** (~10min)
-Update harness v7 if needed (after any PR merge). Select **30 diverse tasks** matching live duel distribution.
+Update harness v6 if needed (after any PR merge). Select **100 diverse tasks** matching live duel distribution.
 
 > ⚠️ **TASK POOL ROTATION — CRITICAL (James directive 2026-05-19)**
 > Task pool rotates at 10 tasks/hour starting this week.
@@ -157,12 +154,12 @@ Update harness v7 if needed (after any PR merge). Select **30 diverse tasks** ma
 
 ```bash
 # Check current task type distribution in 100-task pool
-python3 validator_harness_v7.py --list-tasks 30 --seed 42
+python3 validator_harness_v6.py --list-tasks 100 --seed 42
 
 # Use varied seeds each pipeline run to avoid overfitting
 # e.g. seed 42, 137, 271 in rotation
 # Gate command (always 100 tasks, always --timeout 600):
-# python3 -u validator_harness_v7.py --challenger agent_vNext.py --king king_agent.py --tasks 30 --seed 42 --parallel 2 --timeout 300
+# python3 -u validator_harness_v6.py --challenger agent_vNext.py --king king_agent.py --tasks 100 --seed 42 --parallel 3 --timeout 600
 ```
 - **Output:** `research/GATE_TASKS_SN66_vNEXT.txt`
 
@@ -406,32 +403,20 @@ See also: `MINER_SUBMISSION_CHECKLIST.md` Pre-Submission Fix Checklist (4 CI ite
 ```bash
 tmux new-session -d -s sn66_vNEXT_gate
 tmux send-keys -t sn66_vNEXT_gate \
-  "cd /root/sn66-ninja && python3 -u validator_harness_v7.py \
+  "cd /root/sn66-ninja && python3 -u validator_harness_v6.py \
   --challenger agent_cl_gpt_vNEXT.py --king king_agent.py \
-  --tasks 30 --seed 42 --parallel 2 --timeout 300 2>&1 | tee /tmp/vNEXT_gate30.log" Enter
+  --tasks 50 --seed 42 --parallel 3 --timeout 600 > /tmp/vNEXT_gate_50.log 2>&1" Enter
 
 # Monitor
-tail -f /tmp/vNEXT_gate30.log
+tail -f /tmp/vNEXT_gate_50.log
 ```
 
-**Threshold: ≥57% decisive WR on 30 tasks (v7 live-accurate judge)**
+**Threshold: ≥60% decisive WR on 50 tasks**
 
 **If PASS (≥60%):**
 → Report full results to James (breakdown by task type)
 → Ask for explicit submission approval
-
-**PRE-REGISTRATION GATE (MANDATORY) — before ANY hotkey registration / `burned_register` / submission:**
-```bash
-cd /root/sn66-ninja && bash scripts/burn_guard.sh
-# Exit 0 = proceed | Exit 1 = BLOCKED (analyse root cause before registering)
-```
-The guard HARD-BLOCKS (exit 1) when: (a) 3+ consecutive duel losses across our
-hotkeys (same root cause likely — analyse, don't keep burning τ), or (b) T68Coldkey
-free balance < τ0.25 (low-balance alert). Override only with James's explicit
-approval (L-NO-AUTO-SUBMIT-1). *(H5 fix 2026-06-16: Jun 14-16 burned ~τ1.5 over
-9+ consecutive losing duels with zero kings won — this gate forces the pause.)*
-
-→ Submit only after burn_guard passes (or James overrides) AND James says yes
+→ Submit only after James says yes
 
 **If FAIL (<60%):**
 → Send James the gate results with breakdown by task type
@@ -621,10 +606,10 @@ Output: `research/AUDIT_STAGE2_vNEXT.md` + `research/DEBATE_STAGE2_vNEXT.md`
 **Step 6 — Real Gate Test** (50 tasks, tmux, final confirmation)
 ```bash
 tmux new-session -d -s sn66_stage2_gate
-python3 validator_harness_v7.py --challenger agent_vNEXT.py --king king_agent.py \
-  --tasks 30 --seed 42 --model t68-sn66-m27 --parallel 2 --timeout 300
+python3 validator_harness_v6.py --challenger agent_vNEXT.py --king king_agent.py \
+  --tasks 50 --seed 42 --model t68-sn66-m27 --parallel 5 --timeout 600
 ```
-Threshold: ≥57% decisive WR. Always in tmux.
+Threshold: ≥60% decisive WR. Always in tmux.
 
 **Step 7 — Report to James + Submit** (same approval rule as Stage 1)
 
@@ -673,8 +658,7 @@ Every win generates training data that makes the next version stronger.
 | Judge SFT consensus | filter: consensus=True | **176,587** | FT-3 gold subset |
 | Live duel DPO | `training_data/dpo/` (daily, growing) | growing | Real competition signal |
 | King history | `training_data/king_history/` | 21 kings | "what wins" patterns |
-| ~~Harness v6~~ | ~~`validator_harness_v6.py`~~ | ~~1,842L~~ | **DEPRECATED — do not use** |
-| Harness v7 | `validator_harness_v7.py` | 1,729L | **Local gate testing (live-accurate judge)** |
+| Harness v6 | `validator_harness_v6.py` | 1,842L | Local gate testing |
 
 ### DPO Task Type Distribution (full_matrix)
 - UPDATE: 49.8% (47,572 pairs) — our weakest task type (14% WR crisis in v68/v65)
@@ -761,18 +745,14 @@ Every win generates training data that makes the next version stronger.
 
 ---
 
-### Harness v7 Judge Config (live-accurate — do NOT use v6)
+### Harness v6 Judge Config (keep in sync with live validator)
 ```
 JUDGE_MODEL: anthropic/claude-sonnet-4.6   # matches live validator
 JUDGE_MODEL_FALLBACK: moonshotai/kimi-k2.6
-Scoring: free-form 0-100 on correctness/completeness/alignment-with-reference
-Reference patch: PASSED to judge (dominant signal — v6 never did this)
-Blind judge: SHA256-deterministic A/B (task+challenger+model seed) — reproducible
-Prompt injection: auto-detected and auto-fail
+Scoring: c_combined = llm_score_challenger  # cursor_sim telemetry only
+Blind judge: FIX 8 (commit 81289db) — labels "PATCH A" / "PATCH B" only
 ```
-> ⚠️ **Why v7 not v6:** v6 used a fabricated 40/30/20/10 rubric and never passed the reference patch to the judge. Every v6 gate WR was invalid against the live validator. v7 mirrors live scoring exactly (verified 2026-06-05, Opus 4.8).
-
-**Rule:** After any PR merge to unarbos/ninja affecting scoring → verify v7 matches, update if needed.
+**Rule:** After any PR merge to unarbos/ninja affecting scoring → verify harness matches, update if needed.
 
 ---
 
@@ -965,42 +945,3 @@ Without the COMPLETENESS ASYMMETRY counterbalance, this kills REFACTOR.
 4. `gemini35_winner` — deprioritized (lower agreement rate)
 
 **Lesson saved: L-SN66-JUDGE-GEMINI-DOWNGRADE-1**
-
----
-
-## 🚨 SN66 Team Intel — Competition Restart (2026-06-18)
-
-> "reference patch was often not a good patch, which is why we removed it. miners were trying to match a patch that wasn't good, when really they should just be solving the task in a way that the judge sees as good. the issues with the judge were likely because gemini 3.1 flash lite is a model that has some hallucination issues, we will be changing the judge model and likely solver model on competition restart."
-
-### Key implications for T68
-
-**1. Reference patch REMOVED from judge scoring**
-- Our harness v7 currently passes the reference patch to the judge — this is NOW INVALID
-- The judge no longer scores "similarity to reference" — it scores "did the agent solve the task well"
-- **Action: update validator_harness_v7.py to NOT pass reference patch to judge**
-- All prior gate results (G37–G44) are partially invalid — they were scored partly against a reference that the real validator has dropped
-- This means our gate WR estimates may be OFF — either higher or lower on restart
-
-**2. Judge model changing (Gemini 3.1 Flash Lite → TBD)**
-- Gemini 3.1 Flash Lite has hallucination issues → being replaced
-- New judge = different scoring preferences → all hint tuning done against old judge is partially wasted
-- **Action: after restart, re-run gate with new judge to get clean baseline before submitting**
-- Likely new judge: Claude Sonnet 4.6 or Kimi-K2.6 (SN66 team tested these previously)
-
-**3. Solver model may change too**
-- "likely solver model" change on restart
-- If solver changes, the king agent.py will also change — must re-sync king
-- **Action: sync king IMMEDIATELY when competition restarts before submitting anything**
-
-### Updated pre-submission checklist (MANDATORY on restart)
-1. ✅ `bash scripts/sync_king.sh` — re-sync king (solver model may have changed)
-2. ✅ Update validator_harness_v7.py to remove reference patch from judge prompt
-3. ✅ Re-run 30-task gate with updated harness to get fresh baseline
-4. ✅ Only THEN evaluate ProjectNobi-v42 or next version for submission
-5. ✅ Check burn_guard.sh before registering any hotkey
-
-### L-SN66-NO-REFERENCE-PATCH-1 (new lesson, 2026-06-18)
-**NEVER pass reference patch to judge in local gate harness.** The live validator
-does NOT use reference patches for scoring — miners must solve tasks well on their
-own merits, not by matching a reference. Update harness to score on task quality only.
-

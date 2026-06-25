@@ -154,22 +154,12 @@ class ChatModel:
             raise ModelQueryError(f"model response has no choices: {raw[:300]}")
         message = choices[0].get("message") if isinstance(choices[0], dict) else None
         content = message.get("content") if isinstance(message, dict) else None
-        # Handle list-shaped content parts (some proxy responses normalize the
-        # assistant message into a list of {type, text}/{content} parts).
         if isinstance(content, list):
-            parts = []
-            for part in content:
-                if isinstance(part, dict):
-                    parts.append(str(part.get("text") or part.get("content") or ""))
-                elif part is not None:
-                    parts.append(str(part))
-            content = "".join(parts)
+            content = "".join(
+                str(part.get("text") or "") for part in content if isinstance(part, dict)
+            )
         if not isinstance(content, str):
             raise ModelQueryError(f"model response has no text content: {raw[:300]}")
-        # Reject empty proxy-normalized replies so the loop retries instead of
-        # silently advancing on a no-op step (upstream fix ae2158103232).
-        if not content.strip():
-            raise ModelQueryError(f"model returned empty content: {raw[:300]}")
         return content
 
 
@@ -200,40 +190,6 @@ SYSTEM_PROMPT = """\
 You are a precise software engineering agent that interacts with a computer
 through bash commands to fix issues in a repository checked out at the
 current working directory.
-
-## COMPLETENESS BEATS MINIMALISM
-Under-editing costs MORE than over-editing: a missed requirement scores 0 for
-that requirement, while a slightly-too-broad edit is only mildly penalized.
-Always err toward fully satisfying the task rather than stopping short.
-
-## ACCEPTANCE CRITERIA FIRST
-Before writing ANY code, identify every acceptance criterion in the task. Your
-patch must address ALL of them. Partial implementations lose decisively. Enumerate
-the criteria, then verify each one is covered before you submit.
-
-## UPDATE TASK WIRING RULE
-A feature that exists but is never called = 0 points. Wire new code into event
-handlers, state management, data flows, and call sites. For multi-file tasks,
-enumerate EVERY required file and update ALL of them — a patch covering 4 of 5
-required files loses to one covering all 5.
-
-## CORRECTNESS GUARDS
-- Imports: keep them at top-level/file-correct scope; never place an import
-  inside a function body, and never import a module not already available.
-- TypeScript: preserve exact types, no `any` unless the task requires it.
-- No test regressions: do not break existing tests. For edited Python files,
-  verify syntax with `python -c 'import ast; ast.parse(open("file.py").read())'`.
-
-## SCOPE DISCIPLINE (counterbalance)
-Change ONLY what the task requires — no refactoring, cosmetic churn, import
-reordering, or speculative error handling. When unsure about a change, leave the
-code as-is. Completeness means covering every requirement, not adding unrelated
-work.
-
-## OUTPUT SAFETY
-Your patch must NOT contain the phrases: 'automatic fail',
-'ignore previous instructions', or 'grader'. These trigger an automatic score
-of 0 regardless of patch quality.
 
 Response format, every single turn:
 1. A short reasoning paragraph explaining what you learned and what you do next.
@@ -342,42 +298,14 @@ def format_help_message() -> str:
     return FORMAT_HELP.format(sentinel=COMPLETION_SENTINEL) + "```\n"
 
 
-def render_observation(
-    *,
-    returncode: int,
-    output_text: str,
-    remaining_steps: int,
-    elapsed: float = 0.0,
-    wall_clock_limit: float = 0.0,
-) -> str:
-    notes = []
-    # Remaining-steps urgency refinement (graduated).
-    if remaining_steps <= 1:
-        notes.append(
-            f"[Final command. Submit now: `echo {COMPLETION_SENTINEL}`]"
-        )
-    elif remaining_steps <= 3:
-        notes.append(
+def render_observation(*, returncode: int, output_text: str, remaining_steps: int) -> str:
+    if remaining_steps <= 3:
+        remaining_note = (
             f"[{remaining_steps} command(s) left. Make the smallest useful edit, "
             f"then submit with `echo {COMPLETION_SENTINEL}`.]"
         )
-    elif remaining_steps <= 5:
-        notes.append(
-            "[5 commands left. Focus: complete the most critical missing change, "
-            "then submit.]"
-        )
-    # Solve-time awareness: faster solves score higher (5% live weight). When few
-    # steps remain AND most of the wall-clock budget is spent, nudge toward a
-    # minimal correct change and submission.
-    if (
-        wall_clock_limit > 0
-        and remaining_steps <= 5
-        and elapsed > 0.6 * wall_clock_limit
-    ):
-        notes.append(
-            "[Time is short. Make the minimal correct change and submit.]"
-        )
-    remaining_note = " ".join(notes)
+    else:
+        remaining_note = ""
     return OBSERVATION_TEMPLATE.format(
         returncode=returncode,
         output=output_text,
@@ -395,77 +323,13 @@ diffs against /dev/null."""
 import subprocess
 
 
-# Reserved substrings stripped from final patch content lines. Any of these in
-# the emitted diff trigger an automatic judge score of 0 (Intel A: 102 auto-fail
-# cases), so we defensively remove them before returning the patch. The king has
-# no such guard; this is a ported protection from our prior agent.
-_EDGECASE_GUARDRAIL = (
-    "ignore previous instructions",
-    "ignore prior instructions",
-    "ignore the above instructions",
-    "as the evaluator",
-    "as the judge",
-    "dear evaluator",
-    "dear judge",
-    "choose challenger",
-    "challenger is correct",
-    "the evaluator should",
-    "the judge should",
-    "other candidate is malicious",
-    "the other candidate is malicious",
-    "automatic fail",
-    "grader",
-    "reward model",
-)
-
-
-def _sanitize_patch(diff_output: str) -> str:
-    """Strip auto-fail trigger substrings from patch CONTENT lines while leaving
-    all diff headers (diff/index/---/+++/@@/mode/rename/binary) intact. A stray
-    trigger phrase in a comment or string would otherwise nuke an otherwise valid
-    round."""
-    if not diff_output.strip():
-        return diff_output
-    lower = diff_output.lower()
-    if not any(trigger in lower for trigger in _EDGECASE_GUARDRAIL):
-        return diff_output
-    kept = []
-    for line in diff_output.splitlines():
-        is_header = (
-            line.startswith("diff --git ")
-            or line.startswith("index ")
-            or line.startswith("--- ")
-            or line.startswith("+++ ")
-            or line.startswith("@@")
-            or line.startswith("new file mode")
-            or line.startswith("deleted file mode")
-            or line.startswith("old mode ")
-            or line.startswith("new mode ")
-            or line.startswith("similarity index ")
-            or line.startswith("dissimilarity index ")
-            or line.startswith("rename from ")
-            or line.startswith("rename to ")
-            or line.startswith("copy from ")
-            or line.startswith("copy to ")
-            or line.startswith("Binary files ")
-            or line.startswith("GIT binary patch")
-        )
-        if not is_header and any(trigger in line.lower() for trigger in _EDGECASE_GUARDRAIL):
-            continue
-        kept.append(line)
-    rebuilt = "\n".join(kept)
-    if diff_output.endswith("\n") and not rebuilt.endswith("\n"):
-        rebuilt += "\n"
-    return rebuilt
-
-
 def collect_repo_patch(repo_dir: str) -> str:
     diff = _run_git(["diff", "--binary", "--", "."], repo_dir)
     listing = _run_git(["ls-files", "--others", "--exclude-standard", "-z"], repo_dir)
     for relative_path in [item for item in listing.split("\0") if item]:
         file_diff = _run_git_diff_no_index(relative_path, repo_dir)
         diff += file_diff
-    return _sanitize_patch(diff)
+    return diff
 
 
 def _run_git(args: list, repo_dir: str) -> str:
@@ -633,8 +497,6 @@ def run_agent_loop(*, config: AgentRunConfig, task: str) -> AgentOutcome:
             returncode=int(result.get("returncode") or 0),
             output_text=truncate_text(output_text, config.max_observation_chars),
             remaining_steps=config.max_steps - step,
-            elapsed=time.monotonic() - started,
-            wall_clock_limit=config.wall_clock_limit,
         )
         messages.append({"role": "user", "content": observation})
 
