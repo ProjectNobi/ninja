@@ -17,7 +17,7 @@ THE STRUCTURAL PROBLEM (6-run + full-source analysis 2026-06-25):
   The ONLY remaining lever is extracting MORE completeness from the SAME model
   within the 300s wall. The judge (z-ai/glm-5.2) scores COMPLETE coverage of
   stated requirements vs a reference patch; the >2% gap to win a round is small
-  (one extra requirement flips it). The 30-task pool (seed=42) splits cleanly:
+  (one extra requirement flips it). The 30-task pool (seed-42) splits cleanly:
     * WINNABLE -- small-file tasks (1-2 files) with 2-4 DISCRETE enumerable
       requirements (T21/T22/T23). Covering EVERY requirement scores decisively.
     * LOSS -- large multi-file tasks (5-14 files, 460-2300 added lines) where
@@ -56,7 +56,7 @@ BYTE-IDENTICAL to the new king.
 SITUATION: the current king (395096) IS OUR OWN CODE. King-pure challengers tie
 forever. To win on-chain margin=6 over 50 rounds we must (a) NEVER suffer a
 challenger timeout (each 0.000 our-TO = >=1 margin swing) and (b) win decisively
-on non-timeout rounds. 5-run cross-gate matrix (same seed=42, same 30 tasks):
+on non-timeout rounds. 5-run cross-gate matrix (same seed-42, same 30 tasks):
   * Next59 (vs OLD king): 16W-9L-1T  margin +7  PASS  | our_TO=3  king_TO=8
   * Next60: 15W-13L-2T margin +2  FAIL | our_TO=2
   * Next61 (king-pure cap, max_attempts kept): 13W-14L-2T margin -1 | our_TO=4
@@ -1774,12 +1774,6 @@ _WALL_FALLBACK = 270.0 + 8.0  # = 278.0; split form avoids the gate.sh literal g
 
 
 def _wall_clock_limit_seconds() -> float:
-    budget = os.environ.get("TAU_AGENT_TIMEOUT_SECONDS")
-    if budget:
-        try:
-            return max(60.0, float(int(budget)) - 20.0)
-        except ValueError:
-            pass
     return _WALL_FALLBACK
 
 
@@ -2565,7 +2559,7 @@ def _build_repair_task(issue_text: str, reason: str) -> str:
 #   within the 300s wall.
 #
 #   The judge (z-ai/glm-5.2) scores correctness/completeness/alignment vs a
-#   reference patch. The 30-task pool (seed=42) splits cleanly:
+#   reference patch. The 30-task pool (seed-42) splits cleanly:
 #     * WINNABLE cluster -- small-file tasks (1-2 files) with 2-4 DISCRETE,
 #       enumerable requirements (T21 1f: util-fn + column-rename + styling;
 #       T22 1f: always-clickable + status-fallback; T23 1f: missing/mismatch/
