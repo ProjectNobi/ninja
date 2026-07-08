@@ -153,6 +153,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import signal
 import subprocess
 import time
 import traceback
@@ -220,12 +221,16 @@ _ADOPTION_CHECK_RESERVE_SECONDS = 10.0  # reserved for post-sub-loop adoption ch
 _ROUTE_PRELOAD_MAX_CHARS = 4000
 _ROUTE_PRELOAD_FILE_LIMIT = 2
 
-# Budget env key assembled from parts; fallback and margin computed, so no
-# bare budget literal is visible to submission-checklist greps.
+# Live duel wall = hard 300s SIGKILL; TAU_AGENT_TIMEOUT_SECONDS is NOT passed to
+# solve() in live duels, so the fallback is what actually runs. Rule (duel-7241
+# forensics, enforced by scripts/gate.sh): fallback MUST be 270.0 (300 - 30s
+# reserve) and reserve MUST be >= 30.0. KS38 shipped 280.0/10.0 (the float(28*10)
+# form was grep-evasion that also defeated gate.sh's budget guardrail); honest
+# literals here let that guardrail actually validate the budget. (KS39 R6 fix.)
 _BUDGET_ENV_KEY = "TAU_AGENT_" + "TIMEOUT" + "_SECONDS"
-_FALLBACK_WALL_CLOCK = float(28 * 10)   # twenty-eight x ten
-_WALL_CLOCK_MARGIN = float(4 * 5)       # matches the king's reserve
-_WALL_CLOCK_RESERVE_SECONDS = 10.0
+_FALLBACK_WALL_CLOCK = 270.0
+_WALL_CLOCK_MARGIN = 30.0
+_WALL_CLOCK_RESERVE_SECONDS = 30.0
 
 
 def _resolve_wall_clock() -> float:
@@ -681,20 +686,49 @@ _BASH = "/bin/bash" if os.path.isfile("/bin/bash") else None
 def _execute_command(command: str, cwd: str, timeout: int) -> Dict[str, Any]:
     env = os.environ.copy()
     env.update(_QUIET_ENV)
+    timeout = max(1, int(timeout))
+    # start_new_session=True gives the command its own process group so a command
+    # that spawns lingering grandchildren (dev server, watcher, REPL, a test with
+    # a hung fixture) is killed as a GROUP on timeout. Plain subprocess.run only
+    # kills the immediate shell, letting orphans hold the pipe open and hang the
+    # round tail past the 300s SIGKILL -> empty patch -> 0.00. (KS39 R6 fix.)
     try:
-        completed = subprocess.run(
+        proc = subprocess.Popen(
             command, shell=True, cwd=cwd, env=env, text=True,
-            encoding="utf-8", errors="replace", timeout=max(1, int(timeout)),
+            encoding="utf-8", errors="replace",
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, executable=_BASH,
+            start_new_session=True,
         )
-        return {"output": completed.stdout or "", "returncode": completed.returncode}
-    except subprocess.TimeoutExpired as exc:
-        partial = exc.output or ""
-        if isinstance(partial, bytes):
-            partial = partial.decode("utf-8", errors="replace")
-        return {"output": f"{partial}\n[command timed out after {timeout} seconds]", "returncode": 124}
     except (OSError, ValueError) as exc:
         return {"output": f"[command could not be executed: {exc}]", "returncode": -1}
+    try:
+        output, _ = proc.communicate(timeout=timeout)
+        return {"output": output or "", "returncode": proc.returncode}
+    except subprocess.TimeoutExpired:
+        _kill_process_group(proc)
+        try:
+            output, _ = proc.communicate(timeout=5)
+        except (subprocess.TimeoutExpired, ValueError, OSError):
+            output = ""
+        return {"output": f"{output or ''}\n[command timed out after {timeout} seconds]", "returncode": 124}
+
+
+def _kill_process_group(proc: "subprocess.Popen") -> None:
+    """SIGKILL the command's whole process group, falling back to the child."""
+    try:
+        pgid = os.getpgid(proc.pid)
+    except (OSError, ProcessLookupError):
+        pgid = None
+    if pgid is not None:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+            return
+        except (OSError, ProcessLookupError):
+            pass
+    try:
+        proc.kill()
+    except (OSError, ProcessLookupError):
+        pass
 
 
 def _truncate_text(text: str, limit: int) -> str:
