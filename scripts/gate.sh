@@ -152,22 +152,17 @@ done
 if [[ -n "$CHALLENGER_FILE" ]]; then
     ABS_CHALLENGER="$REPO_ROOT/$CHALLENGER_FILE"
     [[ -f "$CHALLENGER_FILE" ]] && ABS_CHALLENGER="$CHALLENGER_FILE"
-    # Catch both literal returns AND constant-form assignments (KS38 evaded via
-    # float(28*10); KS41 evaded via _FALLBACK_WALL_CLOCK = 280.0 + return CONST).
-    # Settled 2026-07-09 (A Hung audit): 270.0/30.0 is the ONLY sanctioned budget.
-    if grep -qE 'return (280|300|570)\.0|_FALLBACK_WALL_CLOCK[[:space:]]*=[[:space:]]*(280|300|570)(\.0)?' "$ABS_CHALLENGER" 2>/dev/null; then
-        BADVAL=$(grep -oE 'return (280|300|570)\.0|_FALLBACK_WALL_CLOCK[[:space:]]*=[[:space:]]*(280|300|570)(\.0)?' "$ABS_CHALLENGER" | head -1)
+    # Import the module and call the resolver -- grep cannot see through named
+    # constants or arithmetic (KS38: float(28*10), KS41: _FALLBACK_WALL_CLOCK=280).
+    # scripts/check_budget.py strips TAU_AGENT_* env so the fallback path runs.
+    # Settled 2026-07-09 (A Hung audit): MAX=270.0s, MIN_RESERVE=30.0s.
+    if ! python3 "$REPO_ROOT/scripts/check_budget.py" "$ABS_CHALLENGER"; then
         echo "❌ BUDGET CHECK FAILED (L-SN66-LIVE-DUEL-TIMEOUT-1)"
-        echo "   Challenger has wrong budget fallback in _wall_clock_limit_seconds(): $BADVAL"
         echo "   Live duel = 300s per round (confirmed duel 7241 forensics 2026-06-24)."
-        echo "   570.0 = 2x real wall; agent SIGKILL'd at 300s before solve() returns."
-        echo "   280.0 / 300.0 = too tight, no reserve for return path."
-        echo "   Fix: change fallback to 'return 270.0' (300s - 30s reserve)."
-        echo "   AND: WALL_CLOCK_RESERVE_SECONDS >= 30.0"
+        echo "   Fix: _FALLBACK_WALL_CLOCK = 270.0, _WALL_CLOCK_RESERVE_SECONDS = 30.0"
         echo "   File: $ABS_CHALLENGER"
         exit 1
     fi
-    echo "✅ Budget check OK (fallback != 280/300/570s, constant-form checked)"
 fi
 
 # ── Step 3: forward to harness with verified king + king-sha ──────────────────

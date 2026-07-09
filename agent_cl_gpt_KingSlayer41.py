@@ -1829,6 +1829,10 @@ _KS41_ATTEMPT2_MARGIN = 100.0          # king: ATTEMPT2_MARGIN
 _KS41_MATERIALIZE_MIN = 30.0           # king: 15.0; widened vs SIGKILL race
 _KS41_MIN_ATTEMPT2_WALL = 60.0         # king: _MIN_ATTEMPT2_WALL
 _KS41_GIT_TIMEOUT = 30                 # king: _GIT_TIMEOUT
+# Reroll tracer — set KS41_TRACE=/tmp/ks41_trace.jsonl to instrument decisions.
+# Each line is a JSON object: {task, fired, reason, key_a, key_b, adopted_b, elapsed}
+# Off by default in live duels (env var absent). Zero overhead when unset.
+_KS41_TRACE_PATH = os.environ.get("KS41_TRACE")
 
 
 @dataclass
@@ -2052,6 +2056,18 @@ def _floor_outcome_ks41(repo: str) -> RunOutcome:
     )
 
 
+def _ks41_trace(record: dict) -> None:
+    """Append one JSON record to KS41_TRACE_PATH if set. Never raises."""
+    if not _KS41_TRACE_PATH:
+        return
+    try:
+        import json as _json
+        with open(_KS41_TRACE_PATH, "a", encoding="utf-8") as _fh:
+            _fh.write(_json.dumps(record) + "\n")
+    except Exception:
+        pass
+
+
 def _run_best_of_two_ks41(config: RunConfig, task: str, issue_text: str) -> RunOutcome:
     """King's run_best_of_two() semantics, calling KS41's _run_loop.
 
@@ -2093,8 +2109,15 @@ def _run_best_of_two_ks41(config: RunConfig, task: str, issue_text: str) -> RunO
 
     multi_req = (len(named_files) + len(named_syms)) >= 2
     remaining = budget - (time.monotonic() - t0)
-    if not _is_weak_ks41(info_a, multi_req) or remaining < _KS41_ATTEMPT2_MIN_REMAINING:
+    weak_a = _is_weak_ks41(info_a, multi_req)
+    if not weak_a or remaining < _KS41_ATTEMPT2_MIN_REMAINING:
+        _ks41_trace({"task": task[:80], "fired": False,
+                     "reason": "strong" if not weak_a else "budget",
+                     "key_a": _key_ks41(info_a), "elapsed": time.monotonic() - t0})
         return outcome_a
+
+    _ks41_trace({"task": task[:80], "fired": True, "reason": "weak",
+                 "key_a": _key_ks41(info_a), "remaining": remaining})
 
     tmp_root = None
     try:
@@ -2118,7 +2141,12 @@ def _run_best_of_two_ks41(config: RunConfig, task: str, issue_text: str) -> RunO
         except Exception:
             return outcome_a
 
-        if _key_ks41(info_b) <= _key_ks41(info_a):
+        adopted = _key_ks41(info_b) > _key_ks41(info_a)
+        _ks41_trace({"task": task[:80], "fired": True,
+                     "key_a": _key_ks41(info_a), "key_b": _key_ks41(info_b),
+                     "adopted_b": adopted, "elapsed": time.monotonic() - t0})
+
+        if not adopted:
             return outcome_a  # not strictly better -> keep #1, already on primary
 
         if (budget - (time.monotonic() - t0)) < _KS41_MATERIALIZE_MIN:
