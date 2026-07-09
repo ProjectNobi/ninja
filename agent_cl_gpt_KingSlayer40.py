@@ -113,11 +113,14 @@ _PARTIAL_CREDIT_NOTE = (
     "Do NOT explore extensively. Identify the single most obvious edit and apply it now.\n"
 )
 
-# KS40 change 5: hard-task conservative strategy note.
+# KS40 change 5: hard-task scope note — reframed per A Hung review (2026-07-09).
+# Original "do less" framing replaced: never tell solver to drop requirements.
 _HARD_TASK_NOTE = (
-    "\n\u26a0\ufe0f CONSERVATIVE STRATEGY: This task has unclear or broad scope. "
-    "Make the smallest valid change you can identify with high confidence. "
-    "Partial credit beats an empty submission. Focus on ONE clear requirement.\n"
+    "\n\u26a0\ufe0f SCOPE NOTE: This task has broad or unclear scope. Do NOT stall on "
+    "exploration. Identify the complete set of requirements, implement a correct core "
+    "that covers as many as you confidently can, and expand while budget remains. "
+    "A complete solution wins; only fall back to a minimal correct change if you cannot "
+    "confidently do more. Never submit empty.\n"
 )
 
 # Live duel wall = hard 300s SIGKILL; TAU_AGENT_TIMEOUT_SECONDS is NOT passed to
@@ -572,17 +575,23 @@ _HARD_TASK_SIGNAL_RE = re.compile(
 
 
 def _is_hard_task_ks40(issue_text: str, repo_dir: str) -> bool:
-    """Heuristic: True if task appears scope-ambiguous or complex."""
-    # Signal 1: no file named in issue text
-    if not _ISSUE_FILE_RE.search(issue_text or ""):
+    """Heuristic: True if task is genuinely under-specified.
+
+    A Hung review (2026-07-09): signal 1 (no named file) was too broad —
+    fires on every file-less task including high-tier completeness rounds.
+    Fixed: signal 1 now only triggers when co-occurring with signal 2
+    (short + few backticks). Signal 3 (refactor/rewrite) retained as
+    standalone because those tasks are genuinely scope-ambiguous.
+    """
+    text = issue_text or ""
+    words = text.split()
+    backtick_syms = re.findall(r"`[^`]+`", text)
+    no_named_file = not _ISSUE_FILE_RE.search(text)
+    # Only hard when genuinely under-specified: file-less AND short/vague
+    if no_named_file and len(words) < 80 and len(backtick_syms) < 2:
         return True
-    # Signal 2: very short issue with few backtick symbols
-    words = (issue_text or "").split()
-    backtick_syms = re.findall(r"`[^`]+`", issue_text or "")
-    if len(words) < 80 and len(backtick_syms) < 2:
-        return True
-    # Signal 3: broad/refactor vocabulary
-    if _HARD_TASK_SIGNAL_RE.search(issue_text or ""):
+    # Broad refactor/rewrite vocabulary is always genuinely ambiguous
+    if _HARD_TASK_SIGNAL_RE.search(text):
         return True
     return False
 
@@ -1331,21 +1340,15 @@ def _run_loop(config: RunConfig, task: str) -> RunOutcome:
                 continue
             # KS38 change 3: hold the submission ONCE when the diff has an
             # objectively detectable gap and budget remains to close it.
-            # KS40 change 6: skip completeness gate if patch is already
-            # substantial (>30 added lines) and has no syntax errors --
-            # trust a clean large patch, avoid over-engineering it.
+            # KS40 change 6 reverted per A Hung review (2026-07-09): the
+            # >30-line heuristic skip was removed — _completeness_gap is the
+            # sole authority; it already returns falsy when there is no gap.
+            # _has_syntax_errors helper is retained (used by reroll).
             if not completeness_nudge_sent:
                 steps_left = config.max_steps - step
                 time_left_now = (wall - (time.monotonic() - started)) if wall > 0 else float("inf")
-                _patch_now = _collect_repo_patch(config.repo_dir)
-                _added_now, _ = _line_stats(_patch_now)
-                _skip_gate = (
-                    _added_now > 30
-                    and not _has_syntax_errors(config.repo_dir, _patch_now)
-                )
                 if (
-                    not _skip_gate
-                    and steps_left >= _COMPLETENESS_MIN_STEPS_LEFT
+                    steps_left >= _COMPLETENESS_MIN_STEPS_LEFT
                     and time_left_now >= _COMPLETENESS_MIN_SECONDS
                 ):
                     gap = None
@@ -1987,6 +1990,12 @@ def run_best_of_two_ks40(config: "RunConfig", task: str, issue_text: str) -> "Ru
                 transcript=outcome_b.transcript,
             )
         # Apply failed: restore attempt #1 floor.
+        # A Hung review (2026-07-09) FIX 3: _materialize_ks40 resets to
+        # orig_sha first, so calling it with patch_a here correctly restores
+        # attempt #1's state without double-destroying work. The earlier
+        # _materialize_ks40(repo, orig_sha, patch_b) already reset to orig_sha
+        # before the failed apply, so the tree is already clean — just re-apply
+        # patch_a on top of the now-clean orig_sha state.
         _materialize_ks40(repo, orig_sha, patch_a)
         fresh_patch = _collect_repo_patch(repo)
         return RunOutcome(
