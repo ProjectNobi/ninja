@@ -1,17 +1,52 @@
 # KS41 — Review Brief for A Hung
 **Author: Dragon Lord 🐉 (Fable-5) | 2026-07-09**
-**Branch: `kingslayer/ks41` | Commit: `471d4cb` (+audit-fix commit) | File: `agent_cl_gpt_KingSlayer41.py` (2296 lines)**
-**CI: PASS** (py_compile OK, `from agent import solve` OK as standalone file, no forbidden sampling params, solve() contract intact)
+**Branch: `kingslayer/ks41` | Latest commit: `e44e831` | File: `agent_cl_gpt_KingSlayer41.py` (2331 lines)**
+**CI: PASS** (py_compile OK, no forbidden sampling params, solve() contract intact, runtime-verified: import+call test executed)
+
+---
+
+## Corrections from A Hung audit (2026-07-09 16:33 UTC)
+
+Prior messages contained four bookkeeping errors — corrected here:
+
+1. **"all 4 commits" was 3 commits.** Commits on branch: `471d4cb`, `329d953`, `7bc69f8`, `fdedbe9`, `92f851a`, `e44e831`. Count stated correctly now.
+2. **"4 call sites" was 3.** `_trace_ks41(` appears at lines 2119, 2125, 2153 — three call sites. The fourth grep hit was the `def` line.
+3. **"2296 lines" / "2364 lines"** were both stale. Current file: **2331 lines** (after crash fix + Patch 3 revert).
+4. **Byte-identity claim on lines 12/13/20** was overclaimed. Correct statement: everything outside the listed changes matches `KingSlayer39_submitted.py` (local), which is NOT in the sn66-miners repo. Diff target for reviewers is `KingSlayer38.py`. The `issue`→`issue_text` rename is visible vs KS38 but was already in KS39-submitted — documented as change #4.
+
+### On the R16 root-cause inference
+
+A Hung correctly notes: "Confirmed, not guessed" was too strong. The 0.000 rounds in duel 251186 ran under a 300s SIGKILL. The `timeout_600s` evidence is from gate logs — different harness, different limit, different task set. The theory (reroll blowing total budget → `_run_loop` runs twice on dirty tree → SIGKILL) is mechanically plausible and more precise than "materialize race," but it is inference, not measurement. The duel's own per-round logs would settle it; the public API does not expose them.
+
+The crash fix (`import sys` missing → NameError → `_run_best_of_two_ks41` escapes → fallback `_run_loop` on dirty tree → two full agent loops) is real and verified at runtime. Whether that exact path caused R16 in duel 251186 remains unconfirmed.
+
+### Patch 3 (test signal) — deferred
+
+Reverted in `e44e831`. Reasons:
+- R16 and R36 were TypeScript/PHP repos — `pytest` returns -1, signal is inert on exactly the failing rounds
+- "Baseline before attempt #1" is impossible: attempt #1 already dirtied the primary tree
+- Budget guard ran backwards (could spend 75s of pytest inside 270s wall, leaving 0s for materialize)
+- `import sys` missing caused NameError on the baseline call, rebuilding R16
+
+Revisit after `_trace_ks41` data shows real fire/adopt rates. If reroll fires often on Python repos and frequently adopts wrong patches there, a language-aware test runner (checking repo's own `Makefile`/`npm test`/`pytest` depending on language) is the correct next step.
+
+---
 
 ---
 
 ## What KS41 is
 
 **KS41 = KS39 (the challenger that BEAT this king family, mean 0.729) + the changes listed below.**
-It is NOT based on KS40 (which regressed to 0.699 and lost duel 251186). Everything outside the
-changes below is byte-identical to `agent_cl_gpt_KingSlayer39_submitted.py`
-(Local path: `agent_cl_gpt_KingSlayer39_submitted.py` — same code, committed to the
-sn66-miners repo as `agent_cl_gpt_KingSlayer38.py`).
+It is NOT based on KS40 (which regressed to 0.699 and lost duel 251186).
+
+**Baseline:** local file `agent_cl_gpt_KingSlayer39_submitted.py` (same code committed to
+sn66-miners repo as `agent_cl_gpt_KingSlayer38.py` — that is the only KS39 file in the repo).
+`agent_cl_gpt_KingSlayer39_submitted.py` is NOT in the sn66-miners repo; a reviewer
+must diff against `agent_cl_gpt_KingSlayer38.py`.
+
+Everything outside the changes listed below matches that baseline, with one caveat: the
+`issue`→`issue_text` parameter rename (see change #4 below) is visible in the diff against
+`KingSlayer38.py` but was already present in the local `KingSlayer39_submitted.py` baseline.
 
 **Note on the `issue`→`issue_text` parameter naming (A Hung audit Issue 3):** the
 `issue_text` parameter name in `_extract_criteria`, `_cpp_config_context`,
