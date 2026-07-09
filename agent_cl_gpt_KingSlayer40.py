@@ -318,8 +318,28 @@ def _format_checklist(criteria: List[str]) -> str:
 # repo preloading (structural edge #1 -- the king ships none)
 # ============================================================
 
-def _repo_paths(repo_dir: str) -> List[str]:
-    root_dir = os.path.abspath(repo_dir)
+# KS40 RepoIndex: cache os.walk result per repo_dir so the filesystem is
+# traversed only ONCE per solve() call regardless of how many helpers
+# (_build_repo_summary, _api_route_candidates, _cpp_config_context, …)
+# consume the path list. A Hung review (2026-07-09).
+@dataclass
+class _RepoIndex:
+    paths: List[str]
+
+_repo_index_cache: Dict[str, "_RepoIndex"] = {}
+
+
+def _get_repo_index(repo_dir: str) -> "_RepoIndex":
+    """Return (and cache) the RepoIndex for repo_dir. Thread-safe for single
+    process use: each task runs in its own subprocess so no locking needed."""
+    key = os.path.abspath(repo_dir)
+    if key not in _repo_index_cache:
+        _repo_index_cache[key] = _RepoIndex(paths=_repo_paths_raw(key))
+    return _repo_index_cache[key]
+
+
+def _repo_paths_raw(root_dir: str) -> List[str]:
+    """Single os.walk traversal. Called only by _get_repo_index."""
     paths: List[str] = []
     for root, dir_names, file_names in os.walk(root_dir, topdown=True, followlinks=False):
         dir_names[:] = sorted(n for n in dir_names if n not in _SKIP_DIR_NAMES)
@@ -332,6 +352,11 @@ def _repo_paths(repo_dir: str) -> List[str]:
         if len(paths) >= _REPO_SUMMARY_ITEM_LIMIT * 3:
             break
     return sorted(paths)
+
+
+def _repo_paths(repo_dir: str) -> List[str]:
+    """Return cached repo path list. All callers use this — zero duplicate walks."""
+    return _get_repo_index(os.path.abspath(repo_dir)).paths
 
 
 # ---- C/C++ awareness (KS34-proven: +0.630 on clang-format task) -----------
@@ -2099,6 +2124,10 @@ def solve(
 ) -> Dict[str, Any]:
     started = time.monotonic()
     try:
+        # KS40 RepoIndex: clear per-task so reroll clone (different dir key)
+        # also gets a fresh index. Each task is a fresh process so this just
+        # guards against accidental re-use within the same process lifetime.
+        _repo_index_cache.clear()
         model_name, base_url, proxy_token = _resolve_inference_config(model, api_base, api_key)
         wall_clock_limit = _resolve_wall_clock()
         repo_summary = _build_repo_summary(repo_path)
