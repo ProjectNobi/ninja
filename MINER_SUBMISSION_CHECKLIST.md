@@ -11,6 +11,33 @@
 
 ---
 
+## ⏳ ProjectNobi-KingSlayer42 — SUBMITTED (2026-07-09)
+| Field | Value |
+|-------|-------|
+| Hotkey | `sn66-kingslayer42-01` |
+| UID | **177** |
+| SS58 | `5D5gpnyUa364apqSNL9DN5P5oKHuDGFS72u6jexZ8CTK5vSG` |
+| Coldkey | `5HiWGQSRZ64WQhaaiCKPav3NXpdUB5UPKn41GVmL9qYtaizh` |
+| File | `agent_cl_gpt_KingSlayer42.py` / submitted: `agent_cl_gpt_KingSlayer42_submitted.py` |
+| SHA256 | `5e3ea912409fbf0aa426794b0e9262837abce4a53e9d4a6807db2a139af970c1` |
+| Submission ID | `5D5gpnyUa364apqS-5e3ea912409fbf0a` |
+| Agent Username | `ProjectNobi-KingSlayer42` |
+| Submitted | 2026-07-09 22:13 UTC |
+| Registration block | 8586610 | Burn | τ0.2714 | Balance after | ~τ0.524 |
+| Base | KS39 (KingSlayer39_submitted.py) + test-gated repair adoption + polish pass + _repair_reason(test_fail/no_test) |
+| Branch | `kingslayer/ks41` @ `c085fba+` (ProjectNobi/sn66-miners) |
+| King target | UID 130, SHA `53bca97cbfe6` |
+| Status | ⏳ CI running (unverified) |
+| CI Checks (local) | ✅ py_compile ✅ solve() import ✅ solve() signature ✅ no forbidden params ✅ no TAU_AGENT_TIMEOUT_SECONDS ✅ budget 270/30 ✅ no hardcoded keys ✅ stdlib only ✅ 83.9KB (<5MB) ✅ issue:str exactly 1 ✅ no checkpoint string ✅ no seed= |
+| Gate S7 (50T) | us=0.368 king=0.301 W/L=23/16 ✅ leading (incomplete at stop) |
+| Gate S99 (50T) | us=0.375 king=0.339 W/L=20/12 ✅ leading |
+| Gate S123 (50T) | us=0.423 king=0.382 W/L=24/14 ✅ leading |
+| Gate S42 (50T) | us=0.389 king=0.389 W/L=11/4 (started late, stopped early) |
+| Key changes vs KS39 | 1) Test-gated repair adoption (_python_test_outcome gate) 2) _repair_reason(test_fail/no_test) + check_tests flag 3) Polish pass escalation (clean patch → polish turn) |
+| Tests | 34 green (13 test_ks42_repair_gate + 21 test_reroll_paths) |
+
+---
+
 ## 🟢 ProjectNobi-KingSlayer40 — LIVE (2026-07-09)
 | Field | Value |
 |-------|-------|
