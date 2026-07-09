@@ -256,12 +256,12 @@ _ROUTE_PRELOAD_FILE_LIMIT = 2
 # Live duel wall = hard 300s SIGKILL; TAU_AGENT_TIMEOUT env is NOT passed to
 # solve() in live duels, so the fallback is what actually runs.
 _BUDGET_ENV_KEY = "TAU_AGENT_" + "TIMEOUT" + "_SECONDS"
-# Budget: 270/30 — settled policy, confirmed by duel-7241 forensics (2026-07-09).
-# Live duel SIGKILL = 300s hard. King's agent/reroll.py uses 280.0/20.0; we
-# use 270/30 to give a wider margin before SIGKILL. KS38 used float(28*10)=280
-# which evaded the old grep-based gate check — that evasion and the 280/20
-# choice both turned out to be wrong. 270/30 is the correct settled value.
-# Do not change without duel evidence and a gate.sh check_budget.py rerun.
+# Live duel wall = hard 300s SIGKILL; TAU_AGENT_TIMEOUT env is NOT passed to
+# solve() in live duels, so the fallback is what actually runs. Rule (duel-7241
+# forensics, enforced by scripts/gate.sh): fallback MUST be 270.0 (300 - 30s
+# reserve) and reserve MUST be >= 30.0. KS38 shipped 280.0/10.0 (the float(28*10)
+# form was grep-evasion that also defeated gate.sh's budget guardrail); honest
+# literals here let that guardrail actually validate the budget. (KS39 R6 fix.)
 _FALLBACK_WALL_CLOCK = 270.0
 _WALL_CLOCK_MARGIN = 30.0
 _WALL_CLOCK_RESERVE_SECONDS = 30.0
