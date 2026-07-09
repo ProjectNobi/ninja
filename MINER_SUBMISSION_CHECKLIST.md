@@ -1072,3 +1072,51 @@ N76 scored margin=+3 in live duel (needed +6). Re-rolling with fresh task set. S
 | vs KS37 S99 | delta: +0.0263 → +0.0727 (+0.0464 🔥) |
 | CI checks | pyflakes ✅ \| py_compile ✅ \| AST ✅ \| scope=0 ✅ \| solve() ✅ |
 | Harness fix | v7 king import bug fixed 2026-07-07 (agent.py/agent/ shadow) |
+
+---
+
+## 🔑 SN66 TEAM INTEL — 2026-07-09 (IMPORTANT STRATEGIC UPDATE)
+
+### Task Score Cap (incoming)
+- Tasks scoring **>70%** will be **disallowed from the task pool**
+- Miners now have a chance to improve on all tasks (no more easy-task farming)
+
+### Token Efficiency Incentive (incoming)
+- Scores within **5% of each other** → **lower token usage wins**
+- Exact formula TBD but directionally: same quality + fewer tokens = better score
+- This is a **new competitive axis** beyond raw patch quality
+
+### Strategic Implication for T68
+1. **Token-efficient harnesses** are now a competitive moat — not just correctness
+2. KS42's polish pass and test-gated repair add LLM calls — **measure token usage per round**
+3. KS39/KS41 (leaner, no polish) may perform better under the new scoring if quality is within 5%
+4. **Priority for next version:** audit token usage per task type; cut wasteful calls first
+5. The sn66 team explicitly called out "harnesses being wasteful in terms of tokens used"
+
+### Quote (verbatim)
+> "our goal is now not to just build the best harness, but build the best *token efficient* harness. this is very important and an untapped area in the market."
+
+
+---
+
+## 🔑 SN66 TEAM INTEL — 2026-07-09 (IMPORTANT STRATEGIC UPDATE)
+
+### Task Score Cap (incoming)
+- Tasks scoring **>70%** will be **disallowed from the task pool**
+- Miners now have a chance to improve on all tasks (no more easy-task farming)
+
+### Token Efficiency Incentive (incoming)
+- Scores within **5% of each other** → **lower token usage wins**
+- Exact formula TBD but directionally: same quality + fewer tokens = better score
+- This is a **new competitive axis** beyond raw patch quality
+
+### Strategic Implication for T68
+1. **Token-efficient harnesses** are now a competitive moat — not just correctness
+2. KS42's polish pass and test-gated repair add LLM calls — measure token usage per round
+3. KS39/KS41 (leaner, no polish) may outperform KS42 if quality is within 5% but tokens lower
+4. **Priority for next version:** audit token usage per task type; cut wasteful calls first
+5. SN66 team explicitly called out "harnesses wasteful in terms of tokens used"
+
+### Verbatim quote
+> "our goal is now not to just build the best harness, but build the best *token efficient* harness. this is very important and an untapped area in the market. i believe this is how we grow katana."
+
