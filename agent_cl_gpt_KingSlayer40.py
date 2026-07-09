@@ -1179,7 +1179,11 @@ def _is_weak_patch_ks40(
                     ast.parse(fh.read())
             except (SyntaxError, ValueError, OSError):
                 return True
-    # Condition 3: named files non-empty AND patch doesn't touch any named file
+    # Condition 3: named files present AND patch touches no named file AND
+    # implements no named symbol.
+    # A Hung review FIX 4 (2026-07-09): original check ignored symbol matches,
+    # causing false-weak on correct fixes in unnamed files that implement a
+    # named symbol — burning a wasted reroll. Mirror _patch_key_ks40 logic.
     if named_files:
         touched = set(_changed_paths(patch_text))
         base_named = {os.path.basename(f) for f in named_files}
@@ -1192,7 +1196,17 @@ def _is_weak_patch_ks40(
             )
         ]
         if not hits:
-            return True
+            # Check whether a named symbol appears in added lines
+            added_blob = "\n".join(
+                ln[1:] for ln in (patch_text or "").splitlines()
+                if ln.startswith("+") and not ln.startswith("+++")
+            )
+            sym_hit = any(
+                re.search(r"\b" + re.escape(sym) + r"\b", added_blob)
+                for sym in named_syms
+            )
+            if not sym_hit:
+                return True
     # Condition 4: multi_req=True AND substantive added lines < 2
     if multi_req and _substantive_lines(patch_text) < 2:
         return True
@@ -1990,13 +2004,12 @@ def run_best_of_two_ks40(config: "RunConfig", task: str, issue_text: str) -> "Ru
                 transcript=outcome_b.transcript,
             )
         # Apply failed: restore attempt #1 floor.
-        # A Hung review (2026-07-09) FIX 3: _materialize_ks40 resets to
-        # orig_sha first, so calling it with patch_a here correctly restores
-        # attempt #1's state without double-destroying work. The earlier
-        # _materialize_ks40(repo, orig_sha, patch_b) already reset to orig_sha
-        # before the failed apply, so the tree is already clean — just re-apply
-        # patch_a on top of the now-clean orig_sha state.
-        _materialize_ks40(repo, orig_sha, patch_a)
+        # A Hung review FIX 3 (2026-07-09): _materialize_ks40 resets to
+        # orig_sha before applying — if that also fails, the tree may be
+        # empty. Belt-and-suspenders: fall back to _restore_patch_to_disk
+        # (atomic helper) which never worsens the tree.
+        if not _materialize_ks40(repo, orig_sha, patch_a):
+            _restore_patch_to_disk(repo, patch_a)
         fresh_patch = _collect_repo_patch(repo)
         return RunOutcome(
             success=bool(fresh_patch.strip()),
