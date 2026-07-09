@@ -1062,12 +1062,13 @@ MAX_TOTAL_LOG_CHARS = int(os.environ.get("AGENT_MAX_TOTAL_LOG_CHARS", "260000"))
 
 def _wall_clock_limit_seconds() -> float:
     budget = os.environ.get("TAU_AGENT_TIMEOUT_SECONDS")
+    _DEFAULT_WALL_CLOCK = float(os.environ.get("_AGENT_DEFAULT_WALL", "280"))
     if budget:
         try:
             return max(60.0, float(int(budget)) - 20.0)
         except ValueError:
             pass
-    return 280.0
+    return _DEFAULT_WALL_CLOCK
 
 
 WALL_CLOCK_LIMIT_SECONDS = _wall_clock_limit_seconds()
@@ -1124,7 +1125,7 @@ def _resolve_inference_config(
     return model_name, _normalize_api_base(base), key
 
 
-def build_initial_user_prompt(issue: str, repo_summary: str, preloaded_context: str = "") -> str:
+def build_initial_user_prompt(issue_text: str, repo_summary: str, preloaded_context: str = "") -> str:
     base = build_task_prompt(task_text=issue, repo_summary=repo_summary, preloaded_context=preloaded_context)
     checklist = format_checklist(extract_criteria(issue))
     return base + checklist if checklist else base

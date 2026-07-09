@@ -3,9 +3,53 @@
 validator_harness_v7.py — SN66 Ninja Local Duel Harness v7  (live-accurate judge)
 
 ╔══════════════════════════════════════════════════════════════════════════════╗
-║  HARNESS v7 — 2026-06-05 — Opus 4.8 Harness Rebuild Agent                      ║
-║  Mirrors the LIVE unarbos/tau diff-judge scoring mechanism EXACTLY.            ║
+║  HARNESS v7 — 2026-06-05 (rebuild) — 2026-07-01 (live-sync audit, Opus 4.8)  ║
+║               2026-07-07 (king multi-file import fix + default king path)    ║
+║  Mirrors the LIVE unarbos/tau diff-judge scoring mechanism EXACTLY.          ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
+
+2026-07-07 FIXES:
+  • KING IMPORT BUG FIXED: king_agent_new_multifile/agent.py imports `from agent.X`
+    but agent.py in the same dir shadows the agent/ subpackage. Runner now detects
+    this pattern and copies the bundle to a clean tempdir (renaming agent.py →
+    king_entry.py) so the agent/ package resolves correctly. Verified: king now
+    imports cleanly and solve() is callable.
+  • DEFAULT --king: changed from king_agent.py → king_agent_new_multifile/agent.py
+    (the current live-synced multi-file king bundle).
+  • atexit cleanup for temp dir on subprocess exit.
+
+KNOWN LIMITATIONS (honest — do NOT ignore these when reading gate results):
+  1. TASK POOL: harness uses R2 dataset (Jun 2, 8258 tasks) not the live rotating
+     pool. Live validator rotates tasks; gate tasks are static. Scores are directionally
+     meaningful but absolute numbers may differ from live.
+  2. LOCAL KING: even with the import fix, the local king (ninja-subnet/ninja ref)
+     may differ from the LIVE king (UID 130, private submission, code unknown).
+     Gate WR vs local king ≠ expected WR vs live king.
+  3. PARALLELISM: local gates run 3 parallel tasks max; live duels run 50 rounds
+     concurrently against a shared inference endpoint. Congestion-retry paths
+     (like KS37's fix) will NOT fire locally — only live duel tests those.
+  CONCLUSION: gate passes = agent is alive, produces patches, passes CI.
+              gate WR vs local king = directional signal only.
+              Live duel = only true ground truth.
+
+2026-07-01 LIVE-SYNC AUDIT (Opus 4.8) — validator HEAD fa665ad86eba:
+  • Multi-file KING package: king_agent.py (263L) + agent/ subpackage. The runner
+    template adds the king's bundle dir to sys.path so its ABSOLUTE imports
+    (`from agent.agent_loop import ...`) resolve; the exec'd module is named
+    `submitted_agent` (no clash — king never references that name). Syntax check
+    now also parses agent/*.py.
+  • ROUND WIN MARGIN: _ROUND_SCORE_WIN_MARGIN = 0.02 (live validate.py).
+  • MEAN-SCORE DETHRONE: live scoring_method="mean"; challenger_mean - king_mean
+    >= 0.05 over 50 rounds. Reported alongside round-level W/L.
+  • BUGFIX: mean-score means were reading non-existent round keys
+    (`challenger_score`/`king_score`) and always collapsed to 0.5 → dethrone
+    signal was permanently False. Now read top-level `llm_score_*`.
+  • BUGFIX: --lcs-test asserted the OLD prompt key
+    (`reference_patch_privileged_context`); updated to `reference_patch_hint`.
+  • TIMEOUT PARITY: inject TAU_AGENT_TIMEOUT_SECONDS into the agent subprocess so
+    the agent's wall-clock budget matches the harness timeout (as live does).
+  • KING STALENESS: auto-read .king_sha sidecar when --king-sha is absent.
+  • JUDGE MODEL: z-ai/glm-5.2 (confirmed from live dashboard round data 2026-07-01).
 
 WHY v7 EXISTS (every prior gate WR from v6 is INVALID against the live validator):
   v6 judged with a FABRICATED 40/30/20/10 rubric and NEVER showed the judge the
@@ -68,6 +112,8 @@ CLI (same as v6, plus --reference-dir):
 
 GATE THRESHOLDS (unchanged — SN66_V7_ROOT_FIX_DEBATE_FINAL.md):
   10 tasks ≥80% WR → proceed | 30 tasks ≥70% WR → proceed | 100 tasks ≥65% WR → go live
+  NOTE: gate WR uses round-level decisive win-rate; the LIVE dethrone gate is the
+  mean-score delta (>= 0.05). Both are reported so you can judge either way.
 """
 
 from __future__ import annotations
@@ -94,10 +140,14 @@ from typing import Any, Dict, List, Optional, Tuple
 SECRETS_FILE    = "/root/.secrets/api_keys.env"
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
 
-# Live judge config — validate_live_reference.py:77-89
-JUDGE_MODEL            = "z-ai/glm-5.2"                    # :88 _DIFF_JUDGE_MODEL — GLM-5.2 confirmed 2026-06-22 Discord intel (was claude-sonnet-4.6 → gemini-3.1-flash-lite → GLM-5.2); fixed prefix zai-org→z-ai 2026-06-23
-JUDGE_MODEL_FALLBACK   = ""                                  # :89 _DIFF_JUDGE_FALLBACK_MODELS = () — no fallback per live validate.py
-JUDGE_MODELS           = tuple(m for m in (JUDGE_MODEL, JUDGE_MODEL_FALLBACK) if m)  # :103 — skip empty fallback
+# Live judge config — README.md (ninja-subnet/ninja) + live validate source 2026-07-04
+# CRITICAL FIX 2026-07-04: judge changed from z-ai/glm-5.2 → anthropic/claude-sonnet-4.6
+# Source: ninja-subnet/ninja README.md: "live diff judge uses anthropic/claude-sonnet-4.6
+#          through OpenRouter at temperature 0 with adaptive reasoning enabled and a
+#          16000-token output cap ... fallback to moonshotai/kimi-k2.6"
+JUDGE_MODEL            = "anthropic/claude-sonnet-4.6"      # LIVE judge — confirmed ninja-subnet/ninja README 2026-07-04
+JUDGE_MODEL_FALLBACK   = "moonshotai/kimi-k2.6"             # fallback when Sonnet returns no-choices error
+JUDGE_MODELS           = tuple(m for m in (JUDGE_MODEL, JUDGE_MODEL_FALLBACK) if m)  # :103
 JUDGE_MAX_TOKENS       = 16_000                            # :82 _DIFF_JUDGE_MAX_TOKENS
 JUDGE_MAX_PATCH_CHARS  = 60_000                            # :84 _DIFF_JUDGE_MAX_PATCH_CHARS
 JUDGE_MAX_TASK_CHARS   = 20_000                            # :85 _DIFF_JUDGE_MAX_TASK_CHARS
@@ -317,11 +367,14 @@ def _score_0_to_1(raw: Any) -> Optional[float]:
     return max(0.0, min(1.0, value))
 
 
+_ROUND_SCORE_WIN_MARGIN = 0.02   # live: validate.py _ROUND_SCORE_WIN_MARGIN (2026-07-01)
+
 def _round_winner_from_scores(king_score: float, challenger_score: float) -> str:
-    """validate_live_reference.py:1536-1542."""
-    if challenger_score > king_score:
+    """validate.py:1541-1550 _round_winner_from_scores — needs >=0.02 gap to win (updated 2026-07-01)."""
+    delta = challenger_score - king_score
+    if delta >= _ROUND_SCORE_WIN_MARGIN:
         return "challenger"
-    if challenger_score < king_score:
+    if delta <= -_ROUND_SCORE_WIN_MARGIN:
         return "king"
     return "tie"
 
@@ -713,7 +766,7 @@ def load_api_key(secrets_file: str = SECRETS_FILE) -> str:
 # ══════════════════════════════════════════════════════════════════════════════
 
 _RUNNER_TEMPLATE = """
-import sys, json, types, traceback
+import sys, json, types, traceback, shutil, tempfile
 import os as _os
 
 agent_path = {agent_path!r}
@@ -724,17 +777,52 @@ api_key    = _os.environ.get("_HARNESS_API_KEY", "")
 api_base   = {api_base!r}
 max_steps  = {max_steps!r}
 
-agent_module = types.ModuleType("agent")
-agent_module.__file__ = agent_path
-agent_module.__spec__ = None
-sys.modules["agent"] = agent_module
+import importlib, importlib.util as _ilu, pathlib as _pl
+_agent_pl   = _pl.Path(agent_path).resolve()
+_bundle_dir = str(_agent_pl.parent)
 
-with open(agent_path) as f:
+# ── Multi-file bundle fix (2026-07-07) ──────────────────────────────────────
+# When agent.py lives next to an agent/ subpackage, Python resolves
+# `import agent` to the file not the package, breaking `from agent.X import Y`.
+# Fix: copy the bundle to a clean temp dir where agent.py is renamed to
+# _king_entry.py so the agent/ directory is the sole `agent` namespace.
+_tmpdir = None
+_agent_name = _agent_pl.name  # e.g. "agent.py"
+_agent_pkg_dir = _agent_pl.parent / "agent"
+if _agent_name == "agent.py" and _agent_pkg_dir.is_dir():
+    _tmpdir = tempfile.mkdtemp(prefix="harness_king_")
+    shutil.copytree(str(_agent_pkg_dir), _tmpdir + "/agent")
+    # ensure package is importable
+    _init = _tmpdir + "/agent/__init__.py"
+    if not _os.path.exists(_init):
+        open(_init, "w").close()
+    shutil.copy(agent_path, _tmpdir + "/king_entry.py")
+    _effective_agent_path = _tmpdir + "/king_entry.py"
+    _bundle_dir = _tmpdir
+else:
+    _effective_agent_path = agent_path
+# ────────────────────────────────────────────────────────────────────────────
+
+if _bundle_dir not in sys.path:
+    sys.path.insert(0, _bundle_dir)
+
+agent_module = types.ModuleType("submitted_agent")
+agent_module.__file__ = _effective_agent_path
+agent_module.__spec__ = None
+sys.modules["submitted_agent"] = agent_module
+
+with open(_effective_agent_path) as f:
     code = f.read()
 if "from __future__ import annotations" not in code:
     code = "from __future__ import annotations\\n" + code
 
-exec(compile(code, agent_path, "exec"), agent_module.__dict__)
+exec(compile(code, _effective_agent_path, "exec"), agent_module.__dict__)
+
+def _cleanup_tmpdir():
+    if _tmpdir and _os.path.isdir(_tmpdir):
+        shutil.rmtree(_tmpdir, ignore_errors=True)
+import atexit as _atexit
+_atexit.register(_cleanup_tmpdir)
 
 try:
     result = agent_module.solve(
@@ -785,7 +873,17 @@ def run_agent(
     )
     # SECURITY: pass the API key via the environment, never embedded in the
     # subprocess argv (would otherwise be visible in `ps aux` / /proc/<pid>/cmdline).
-    runner_env = {**os.environ, "_HARNESS_API_KEY": api_key}
+    #
+    # TIMEOUT PARITY (2026-07-01, Opus 4.8 audit): the LIVE validator passes the
+    # per-round agent budget via TAU_AGENT_TIMEOUT_SECONDS; the agent reads it to
+    # set its own wall_clock_limit. `timeout` here is the subprocess KILL deadline.
+    # Inject the same value so the agent self-terminates cleanly (flushing its
+    # partial patch) just before the hard kill, matching live behaviour.
+    runner_env = {
+        **os.environ,
+        "_HARNESS_API_KEY": api_key,
+        "TAU_AGENT_TIMEOUT_SECONDS": str(timeout),
+    }
     try:
         proc = subprocess.run(
             [sys.executable, "-c", script],
@@ -1295,10 +1393,26 @@ def run_full_duel(
         else:
             _ki = {}
         print(f"  Live king:  UID {_ki.get('uid','?')} | {_ki.get('repo','?')} | commit {str(_ki.get('commit_sha','?'))[:12]}")
-        if king_sha and _ki.get("commit_sha"):
+        # King-SHA source: explicit --king-sha wins; else auto-read .king_sha
+        # sidecar written by scripts/sync_king.sh (2026-07-01 Opus 4.8 audit).
+        _effective_king_sha = king_sha
+        _king_sha_source = "--king-sha"
+        if not _effective_king_sha:
+            try:
+                _sha_file = AGENT_DIR / ".king_sha"
+                if _sha_file.is_file():
+                    _effective_king_sha = _sha_file.read_text().strip().split()[0]
+                    _king_sha_source = ".king_sha"
+            except Exception:
+                _effective_king_sha = None
+        if _effective_king_sha:
+            print(f"  King SHA:   {_effective_king_sha[:12]} (from {_king_sha_source})")
+        if _effective_king_sha and _ki.get("commit_sha"):
             _live_sha = _ki["commit_sha"]
-            if not (_live_sha.startswith(king_sha) or king_sha.startswith(_live_sha[:len(king_sha)])):
-                print(f"  ⚠️  WARNING: --king-sha {king_sha[:12]} != live king {_live_sha[:12]}")
+            if not (_live_sha.startswith(_effective_king_sha)
+                    or _effective_king_sha.startswith(_live_sha[:len(_effective_king_sha)])):
+                print(f"  ⚠️  WARNING: king SHA {_effective_king_sha[:12]} "
+                      f"({_king_sha_source}) != live king {_live_sha[:12]} — SYNC THE KING")
         try:
             if os.path.getmtime(king_path) < os.path.getmtime("/root/sn66-r2-dataset/dashboard.json"):
                 print(f"  ⚠️  WARNING: King file older than dashboard.json — may be stale king")
@@ -1308,9 +1422,10 @@ def run_full_duel(
         pass
     print("")
     print("  ─────────────────────────────────────────────────────────────────")
-    print("  Scoring: round winner = higher judge score (scores override stated winner).")
+    print("  Scoring: round winner = higher judge score (gap ≥0.02 to win, else tie).")
     print("           decisive_win_rate = wins / (wins + losses)  [ties excluded]")
-    print("           live win_margin = 3 → challenger needs wins - losses > 3 to dethrone")
+    print("           LIVE DETHRONE (2026-07-01): scoring_method=MEAN; challenger_mean - king_mean >= 0.05 over 50 rounds")
+    print("           round-level win/loss still shown for comparison but dethrone is mean score delta")
     print("  ─────────────────────────────────────────────────────────────────")
 
     results: List[Dict] = []
@@ -1384,6 +1499,23 @@ def run_full_duel(
     decisive_n  = wins + losses
     decisive_wr = wins / decisive_n if decisive_n > 0 else 0.0
 
+    # Mean score tracking — LIVE DETHRONE METRIC (2026-07-01)
+    # Live validator: scoring_method=mean, dethrone if challenger_mean - king_mean >= 0.05
+    # BUGFIX 2026-07-01 (Opus 4.8 audit): the round dict from score_round() stores
+    # the per-round 0-1 judge scores as `llm_score_challenger`/`llm_score_king`
+    # (also mirrored at the TOP-LEVEL result dict). The prior code read
+    # r["round"]["challenger_score"]/["king_score"] — keys that DO NOT EXIST — so
+    # both means silently collapsed to 0.5 and the dethrone signal was always False.
+    # Read from the top-level result dict, which is populated for BOTH the normal
+    # path (run_task_duel) and the exception-fallback path (run_full_duel).
+    _MEAN_SCORE_DETHRONE_MARGIN = 0.05
+    ch_scores = [r.get("llm_score_challenger", 0.5) for r in results]
+    kg_scores = [r.get("llm_score_king", 0.5)       for r in results]
+    mean_ch = sum(ch_scores) / len(ch_scores) if ch_scores else 0.0
+    mean_kg = sum(kg_scores) / len(kg_scores) if kg_scores else 0.0
+    mean_delta = mean_ch - mean_kg
+    mean_dethrone = mean_delta >= _MEAN_SCORE_DETHRONE_MARGIN
+
     avg_c = (sum(r["cursor_sim_challenger"] for r in results) / len(results)
              if results else 0.0)
     avg_k = (sum(r["cursor_sim_king"] for r in results) / len(results)
@@ -1411,6 +1543,9 @@ def run_full_duel(
     print(f"  Cursor-sim avg (telemetry): ours {avg_c:.3f} | king {avg_k:.3f}  {c_adv_str}")
     print(f"  Decisive win rate:     {decisive_wr*100:.1f}%  ({wins}W-{losses}L-{ties}T)")
     print(f"  95% CI (Wilson):       [{ci_lo*100:.1f}%, {ci_hi*100:.1f}%]")
+    mean_flag = "✅ DETHRONE" if mean_dethrone else "❌ below 0.05"
+    print(f"  Mean score delta:      ch={mean_ch:.4f} king={mean_kg:.4f} delta={mean_delta:+.4f}  [{mean_flag}]")
+    print(f"  (Live dethrone: challenger_mean - king_mean >= 0.05 over 50 rounds)")
     print(f"  Reference source:      dir={n_ref_dir} r2={n_ref_r2} dir_miss_fallback={n_ref_miss}")
     print(f"  Judge fallbacks:       neutral={n_neutral} injection_autofail={n_injection}")
     print(f"  Elapsed:               {elapsed:.0f}s  |  Est. cost: ${total_cost:.4f}")
@@ -1535,11 +1670,24 @@ def lcs_self_test() -> None:
     if not ok_clean:
         errors += 1
 
+    # ── Mean-score keys present on the round dict (regression guard) ──
+    _rd = score_round(0.1, 0.2, "challenger", 0.40, 0.80)
+    ok_meankeys = ("llm_score_challenger" in _rd and "llm_score_king" in _rd
+                   and abs(_rd["llm_score_challenger"] - 0.80) < 1e-9
+                   and abs(_rd["llm_score_king"] - 0.40) < 1e-9
+                   and "challenger_score" not in _rd and "king_score" not in _rd)
+    print(f"  {'✅' if ok_meankeys else '❌'} score_round mean-score keys "
+          f"(llm_score_*, not challenger_score/king_score)")
+    if not ok_meankeys:
+        errors += 1
+
     # ── Prompt builder shape ──
+    # 2026-07-01: reference key renamed reference_patch_privileged_context →
+    # reference_patch_hint (live validate.py:2182). Assert the current key.
     content = _build_judge_content("task text", "ref patch", "a", "b")
     ok_prompt = (isinstance(content, list) and len(content) == 3
-                 and "reference_patch_privileged_context" in content[1]["text"])
-    print(f"  {'✅' if ok_prompt else '❌'} Judge prompt includes reference_patch_privileged_context")
+                 and "reference_patch_hint" in content[1]["text"])
+    print(f"  {'✅' if ok_prompt else '❌'} Judge prompt includes reference_patch_hint")
     if not ok_prompt:
         errors += 1
 
@@ -1661,11 +1809,21 @@ def main() -> None:
             print(f"❌ {label} not found: {path}")
             sys.exit(1)
 
-    import ast
+    # Single `ast` import (2026-07-01 cleanup: removed the redundant top-level
+    # `import ast` and the unused `py_compile` import inside the loop).
+    import ast as _ast
     print("Syntax-checking agents ...")
     for path, label in [(challenger_path, "Challenger"), (king_path, "King")]:
         try:
-            ast.parse(open(path).read())
+            _ast.parse(open(path).read())
+            # Also syntax-check any agent/ subpackage alongside the file (the
+            # KING is now a multi-file package: king_agent.py + agent/*.py).
+            # Harmless for single-file challengers that have no agent/ dir.
+            _bundle = Path(path).resolve().parent
+            _agent_pkg = _bundle / "agent"
+            if _agent_pkg.is_dir():
+                for _sub in sorted(_agent_pkg.glob("*.py")):
+                    _ast.parse(_sub.read_text())
             print(f"  ✅ {label} OK: {Path(path).name}")
         except SyntaxError as e:
             print(f"  ❌ {label} syntax error: {e}")
