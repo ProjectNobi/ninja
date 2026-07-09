@@ -178,18 +178,19 @@ requirements is alignment, not noise.
 
 from __future__ import annotations
 
+import ast
 import json
 import os
 import re
+import shutil
 import signal
 import subprocess
+import sys
+import tempfile
 import time
 import traceback
 import urllib.error
 import urllib.request
-import ast
-import shutil
-import tempfile
 from dataclasses import dataclass, field, replace as _dc_replace
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -2021,37 +2022,16 @@ def _is_weak_ks41(info: _PatchInfoKS41, multi_req: bool) -> bool:
     )
 
 
-def _test_signal_ks41(repo: str, timeout: float) -> int:
-    """Count passing tests in repo. Returns -1 if the suite can't be run.
+def _key_ks41(info: _PatchInfoKS41) -> Tuple[int, int, int, int, int]:
+    """King's _key() verbatim: deterministic, size-excluded.
 
-    Ranks above every structural field: a patch that makes more tests pass is
-    better than a patch that merely looks more complete.
-    When signal is -1 both attempts tie on that field and the tuple degrades
-    to exactly the king's ordering — never worse, sometimes better.
-    """
-    try:
-        r = subprocess.run(
-            [sys.executable, "-m", "pytest", "-q", "--tb=no", "-p", "no:cacheprovider"],
-            cwd=repo, capture_output=True, text=True, timeout=timeout, check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired) as e:
-        print(f"[ks41] test signal unavailable: {e}", file=sys.stderr)
-        return -1
-    m = re.search(r"(\d+) passed", r.stdout or "")
-    return int(m.group(1)) if m else -1
-
-
-def _key_ks41(info: _PatchInfoKS41, tests_passed: int = -1) -> Tuple[int, ...]:
-    """Structural key with test signal above structure.
-
-    tests_passed=-1 when unavailable → ties on that field, falls through to
-    king's ordering. When available, a patch that makes more tests pass wins
-    regardless of structural fields — the only signal the king does not have.
+    Test signal (Patch 3) deferred: pytest only covers Python repos; R16/R36
+    were TypeScript/PHP — the signal would return -1 on exactly the failures
+    it was meant to fix. Revisit after trace data shows reroll fire/adopt rates.
     """
     return (
         int(info.nonempty),
         int(info.py_parses),
-        tests_passed,          # -1 when unavailable → ties, degrades to king's key
         int(info.touches_named_target),
         info.named_reqs,
         int(not info.is_trivial),
@@ -2137,18 +2117,14 @@ def _run_best_of_two_ks41(config: RunConfig, task: str, issue_text: str) -> RunO
     remaining = budget - (time.monotonic() - t0)
     weak = _is_weak_ks41(info_a, multi_req)
     _trace_ks41(event="attempt1", weak=weak, multi_req=multi_req,
-                key_a=list(_key_ks41(info_a)), remaining=round(remaining, 1))
+                key_a=list(_key_ks41(info_a)), remaining=round(remaining, 1),
+                nonempty=info_a.nonempty, py_parses=info_a.py_parses,
+                touches_named=info_a.touches_named_target,
+                named_reqs=info_a.named_reqs, is_trivial=info_a.is_trivial)
     if not weak or remaining < _KS41_ATTEMPT2_MIN_REMAINING:
         _trace_ks41(event="no_reroll",
                     why="not_weak" if not weak else "insufficient_budget")
         return outcome_a
-
-    # Test signal — measure baseline BEFORE copytree dirties anything.
-    # Cap hard at 25s; skip entirely when budget is too tight.
-    _TEST_TIMEOUT = 25.0
-    baseline_tests = -1
-    if remaining >= _KS41_ATTEMPT2_MIN_REMAINING + _TEST_TIMEOUT * 2:
-        baseline_tests = _test_signal_ks41(repo, timeout=_TEST_TIMEOUT)
 
     tmp_root = None
     try:
@@ -2172,19 +2148,10 @@ def _run_best_of_two_ks41(config: RunConfig, task: str, issue_text: str) -> RunO
         except Exception:
             return outcome_a
 
-        # Test signal for attempt #2; compare deltas vs baseline, not absolutes.
-        tests_a = -1
-        tests_b = -1
-        remaining2 = budget - (time.monotonic() - t0)
-        if baseline_tests >= 0 and remaining2 >= _TEST_TIMEOUT * 2:
-            tests_a = _test_signal_ks41(repo, timeout=_TEST_TIMEOUT)
-            tests_b = _test_signal_ks41(copy_repo, timeout=_TEST_TIMEOUT)
-
-        key_a = _key_ks41(info_a, tests_a)
-        key_b = _key_ks41(info_b, tests_b)
+        key_a = _key_ks41(info_a)
+        key_b = _key_ks41(info_b)
         _trace_ks41(event="attempt2", key_a=list(key_a), key_b=list(key_b),
-                    adopted=(key_b > key_a),
-                    baseline_tests=baseline_tests, tests_a=tests_a, tests_b=tests_b)
+                    adopted=(key_b > key_a))
 
         if key_b <= key_a:
             return outcome_a  # not strictly better -> keep #1, already on primary
