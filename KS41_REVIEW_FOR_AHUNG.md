@@ -1,17 +1,27 @@
 # KS41 — Review Brief for A Hung
 **Author: Dragon Lord 🐉 (Fable-5) | 2026-07-09**
-**Branch: `kingslayer/ks40` | Commit: `471d4cb` | File: `agent_cl_gpt_KingSlayer41.py` (2296 lines)**
+**Branch: `kingslayer/ks41` | Commit: `471d4cb` (+audit-fix commit) | File: `agent_cl_gpt_KingSlayer41.py` (2296 lines)**
 **CI: PASS** (py_compile OK, `from agent import solve` OK as standalone file, no forbidden sampling params, solve() contract intact)
 
 ---
 
 ## What KS41 is
 
-**KS41 = KS39 (the challenger that BEAT this king family, mean 0.729) + exactly three changes.**
+**KS41 = KS39 (the challenger that BEAT this king family, mean 0.729) + the changes listed below.**
 It is NOT based on KS40 (which regressed to 0.699 and lost duel 251186). Everything outside the
-three changes below is byte-identical to `agent_cl_gpt_KingSlayer39_submitted.py`.
+changes below is byte-identical to `agent_cl_gpt_KingSlayer39_submitted.py`
+(Local path: `agent_cl_gpt_KingSlayer39_submitted.py` — same code, committed to the
+sn66-miners repo as `agent_cl_gpt_KingSlayer38.py`).
 
-## The three changes (all line numbers in agent_cl_gpt_KingSlayer41.py)
+**Note on the `issue`→`issue_text` parameter naming (A Hung audit Issue 3):** the
+`issue_text` parameter name in `_extract_criteria`, `_cpp_config_context`,
+`_existing_issue_files`, `_issue_named_context`, `_api_route_context`, and
+`_build_initial_user_prompt` is NOT a KS41 change — it is already present in the KS39
+baseline (`agent_cl_gpt_KingSlayer39_submitted.py`). It only shows up as a diff when
+comparing against the repo-committed `agent_cl_gpt_KingSlayer38.py` (which uses `issue`).
+Documented here as visible change #4 for the repo diff.
+
+## The changes (all line numbers in agent_cl_gpt_KingSlayer41.py)
 
 ### 1. King-faithful best-of-two reroll (PRIMARY)
 - **New block:** lines ~1817–2135 (`# KS41: king-faithful best-of-two reroll`).
@@ -36,12 +46,16 @@ three changes below is byte-identical to `agent_cl_gpt_KingSlayer39_submitted.py
 - KS39's proven repair/rescue pipeline in `solve()` still runs AFTER the reroll, unchanged
   (its own budget guards already handle a reroll-consumed wall).
 
-### 2. Wall budget matches king (line ~253)
-- `_FALLBACK_WALL_CLOCK 270.0 → 280.0`, `_WALL_CLOCK_MARGIN 30.0 → 20.0`.
-- The 270/30 rule was our own gate.sh convention, not a validator constraint; the king runs
-  280/20 inside the same 300s SIGKILL and wins. Removes a 10s/round handicap.
-- ⚠️ **Note for you:** `scripts/gate.sh` may still assert 270/30 — if it flags KS41, the
-  guardrail needs updating, not the agent.
+### 2. Wall budget — SETTLED: stays at 270/30 (A Hung audit, 2026-07-09)
+- KS41 briefly moved to `_FALLBACK_WALL_CLOCK 280.0` / `_WALL_CLOCK_MARGIN 20.0`; this has
+  been **reverted to 270.0 / 30.0**, matching KS39 and the gate.sh guardrail.
+- Rationale: duel-7241 forensics established live wall = 300s per round with a hard SIGKILL;
+  270/30 leaves a 30s reserve for the return path. The 280/20 change was speculative with no
+  forensic backing, and it also evaded gate.sh's budget grep (constant-form assignment) —
+  the same class of evasion KS38 used with `float(28*10)`. gate.sh now catches the
+  constant form too. This is settled policy: 270/30.
+- Note: the king's own `run_best_of_two` uses `budget = 280.0` as its zero-budget fallback;
+  KS41 deliberately uses `_FALLBACK_WALL_CLOCK` (270.0) there instead — safer, see reroll diff.
 
 ### 3. `_KS41_MATERIALIZE_MIN = 30.0` (king uses 15.0)
 - Widens the do-not-swap window before the SIGKILL so the `git reset --hard` → `git apply`
@@ -71,6 +85,54 @@ three changes below is byte-identical to `agent_cl_gpt_KingSlayer39_submitted.py
    using our own base regex is the faithful analogue. Confirm.
 3. gate.sh 270/30 budget guardrail (see change 2 note).
 4. Gate protocol before submission: seeds 42/7/99/123, 30 tasks, PASS = delta ≥ +0.040 on ALL seeds.
+
+## Reroll Diff vs King agent/reroll.py
+
+Function-by-function diff of KS41's port against `/root/sn66-ninja/agent/reroll.py`
+(the king's actual reroll implementation), 2026-07-09:
+
+**Byte-equivalent logic (modulo `_ks41` suffixes and single-file plumbing):**
+- `_is_weak_ks41` == `_is_weak` — identical four conditions, same order.
+- `_key_ks41` == `_key` — identical 5-tuple, size-excluded, strictly-greater adoption.
+- `_measure_ks41` == `_measure` — identical (substantive-line count, `is_trivial = substantive < 2`).
+- `_reset_verify_ks41` == `_reset_verify` — identical, incl. the clean-patch verification
+  (`_collect_repo_patch(repo).strip() == ""`) that KS40 dropped.
+- `_materialize_ks41` == `_materialize`; `_git_apply_ks41` == `_git_apply` (no `--index`,
+  `--3way` fallback); `_git_out_ks41`/`_git_run_ks41` == `_git_out`/`_git_run`.
+- `_touched_paths_ks41`, `_all_py_parse_ks41`, `_touches_named_ks41`, `_named_reqs_ks41`,
+  `_outcome_on_disk_ks41`, `_floor_outcome_ks41` — all identical logic.
+- `_run_best_of_two_ks41` vs `run_best_of_two` — same control flow, same guard order, same
+  fall-open behaviour on every failure path.
+- Constants identical: `ATTEMPT2_MIN_REMAINING=160.0`, `ATTEMPT2_MARGIN=100.0`,
+  `_MIN_ATTEMPT2_WALL=60.0`, `_GIT_TIMEOUT=30`.
+
+**Deliberate divergences (all safety-biased, none performance-hurting):**
+1. `_KS41_MATERIALIZE_MIN = 30.0` vs king's `MATERIALIZE_MIN_MARGIN = 15.0` — widened
+   do-not-swap window before SIGKILL. In the rare 15–30s-remaining case KS41 keeps attempt #1
+   instead of swapping; strictly safer, worst case = one KS39 draw.
+2. Zero-budget fallback inside the orchestrator: king hardcodes `budget = 280.0`; KS41 uses
+   `_FALLBACK_WALL_CLOCK` (270.0). Only reachable when `wall_clock_limit` is unset/invalid;
+   10s more conservative, consistent with the settled 270/30 policy.
+3. `tempfile.mkdtemp(prefix="ks41_reroll_")` vs king's `"reroll_"` — cosmetic.
+4. Named-file regex: KS41 uses its own base `_ISSUE_FILE_RE` (adds `.R/.r` extensions).
+   King's reroll.py tries `from agent import _FILE_IN_ISSUE_RE` and falls back to a local
+   regex without `.R/.r`. Since that import does not exist in the king's `agent/__init__.py`,
+   the king actually runs the fallback regex. KS41 using its own base regex is the faithful
+   analogue of "use the base's regex when available". Net effect: KS41 can recognise
+   R-language files as named targets; king cannot. Neutral-to-positive.
+5. Single-file plumbing: `_run_loop`/`_collect_repo_patch`/`RunOutcome`/`_dc_replace`
+   instead of `run_agent_loop`/`collect_repo_patch`/`AgentOutcome`/`dataclasses.replace`.
+   Structural only.
+
+**Answers to open questions #1 and #2 (from this diff):**
+- **Q1 (unnamed-token tasks always reroll):** confirmed king-faithful — the king's `_is_weak`
+  has the identical behaviour (`touches_named_target=False` when no named files/symbols
+  → reroll fires, budget permitting). KS41 mirrors it exactly. No divergence.
+- **Q2 (regex):** resolved as divergence #4 above — KS41's regex is a strict superset
+  (`.R/.r`); the king ships the fallback regex in practice. Faithful analogue, no risk flagged.
+
+**Performance-risk flags:** none. Every divergence either keeps attempt #1 (the KS39 floor)
+or is cosmetic/structural.
 
 ## CI evidence
 - `python3 -m py_compile agent_cl_gpt_KingSlayer41.py` → OK

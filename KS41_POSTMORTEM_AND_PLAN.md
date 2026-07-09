@@ -682,4 +682,18 @@ Amendment: do NOT carry KS40's enhanced rescue (8/60) into KS41 — unproven; ke
 
 ### Built as specified
 `agent_cl_gpt_KingSlayer41.py` (2296 lines) = KS39 + `_run_best_of_two_ks41` block +
-280/20 budget + MATERIALIZE_MIN 30s. CI PASS. Commit `471d4cb` on `kingslayer/ks40`.
+MATERIALIZE_MIN 30s. Budget reverted to 270/30 per A Hung audit (280/20 was speculative
+and evaded gate.sh). CI PASS. Commit `471d4cb` on `kingslayer/ks41` (+audit-fix commit).
+
+## Measurement Caveat (A Hung audit)
+
+The "reroll false positives cost 0.025–0.035 mean" figure used throughout this post-mortem
+is a **plausibility argument, not a measurement**. The duel logs carry no reroll
+instrumentation — we cannot observe which rounds actually fired attempt #2, which adopted a
+worse patch, or the per-round score delta attributable to the reroll. The false-positive
+rate was inferred from code analysis of `_is_weak_patch_ks40` plus the observed aggregate
+regression (0.729 → 0.699), which is consistent with but does not prove the mechanism.
+
+The empirical test is the gate protocol: seeds 42/7/99/123, 30 tasks each. If KS41 recovers
+the delta (≥ +0.040 on all seeds vs KS40's baseline behaviour), the hypothesis is supported;
+if not, the root-cause hierarchy in Part 3 must be revisited.

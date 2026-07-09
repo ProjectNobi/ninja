@@ -258,8 +258,8 @@ _BUDGET_ENV_KEY = "TAU_AGENT_" + "TIMEOUT" + "_SECONDS"
 # KS41: match the king exactly (agent/reroll.py runs a 280.0 fallback and the
 # king's loop reserves 20s inside the 300s SIGKILL). KS39's 270/30 was our own
 # convention, not a validator constraint, and cost 10s of solve time per round.
-_FALLBACK_WALL_CLOCK = 280.0
-_WALL_CLOCK_MARGIN = 20.0
+_FALLBACK_WALL_CLOCK = 270.0
+_WALL_CLOCK_MARGIN = 30.0
 _WALL_CLOCK_RESERVE_SECONDS = 30.0
 
 

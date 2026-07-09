@@ -152,8 +152,11 @@ done
 if [[ -n "$CHALLENGER_FILE" ]]; then
     ABS_CHALLENGER="$REPO_ROOT/$CHALLENGER_FILE"
     [[ -f "$CHALLENGER_FILE" ]] && ABS_CHALLENGER="$CHALLENGER_FILE"
-    if grep -qE 'return (280|300|570)\.0' "$ABS_CHALLENGER" 2>/dev/null; then
-        BADVAL=$(grep -oE 'return (280|300|570)\.0' "$ABS_CHALLENGER" | head -1)
+    # Catch both literal returns AND constant-form assignments (KS38 evaded via
+    # float(28*10); KS41 evaded via _FALLBACK_WALL_CLOCK = 280.0 + return CONST).
+    # Settled 2026-07-09 (A Hung audit): 270.0/30.0 is the ONLY sanctioned budget.
+    if grep -qE 'return (280|300|570)\.0|_FALLBACK_WALL_CLOCK[[:space:]]*=[[:space:]]*(280|300|570)(\.0)?' "$ABS_CHALLENGER" 2>/dev/null; then
+        BADVAL=$(grep -oE 'return (280|300|570)\.0|_FALLBACK_WALL_CLOCK[[:space:]]*=[[:space:]]*(280|300|570)(\.0)?' "$ABS_CHALLENGER" | head -1)
         echo "❌ BUDGET CHECK FAILED (L-SN66-LIVE-DUEL-TIMEOUT-1)"
         echo "   Challenger has wrong budget fallback in _wall_clock_limit_seconds(): $BADVAL"
         echo "   Live duel = 300s per round (confirmed duel 7241 forensics 2026-06-24)."
@@ -164,7 +167,7 @@ if [[ -n "$CHALLENGER_FILE" ]]; then
         echo "   File: $ABS_CHALLENGER"
         exit 1
     fi
-    echo "✅ Budget check OK (fallback != 280/300/570s)"
+    echo "✅ Budget check OK (fallback != 280/300/570s, constant-form checked)"
 fi
 
 # ── Step 3: forward to harness with verified king + king-sha ──────────────────
