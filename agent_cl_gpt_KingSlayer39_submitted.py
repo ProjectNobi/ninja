@@ -1,33 +1,5 @@
 #!/usr/bin/env python3
-"""KingSlayer41 (KS41) = KS39 + king-faithful best-of-two reroll.
-
-BASE: KS39 (agent_cl_gpt_KingSlayer39_submitted.py) — the last challenger that
-BEAT this king family (duel 946782: 25W-17L-8T, mean 0.729). KS40 regressed to
-0.699 and lost duel 251186; KS41 therefore rebases on KS39 and adds exactly
-three changes:
-
-KS41 CHANGES vs KS39 (everything else byte-identical):
-  1. _run_best_of_two_ks41(): king-faithful port of agent/reroll.py. Attempt #1
-     is the unchanged KS39 draw on the primary tree. Only when attempt #1 is
-     objectively weak by the KING'S EXACT _is_weak() (empty | py-syntax-broken |
-     touches no named target | trivial-AND-multi-req) AND >=160s remain does a
-     second independent draw run in an isolated repo copy; the better of the
-     two by the king's exact _key() is kept. Every failure path falls open to
-     attempt #1's on-disk state. Unlike KS40, _reset_verify checks
-     _collect_repo_patch()=="" after reset (KS40 skipped this), and there are
-     no extra weak conditions beyond the king's four.
-  2. Wall budget matches the king exactly: fallback 280.0s, margin 20.0s
-     (KS39 ran 270.0/30.0 — a 10s handicap vs the 300s SIGKILL).
-  3. _KS41_MATERIALIZE_MIN = 30.0s (king uses 15.0): widens the guard so the
-     reset->apply swap window cannot straddle the SIGKILL deadline (closes the
-     R16=0.000 materialize race).
-
-REMOVED vs KS40 (regression sources, never present in this file):
-  _is_hard_task_ks40 / _HARD_TASK_NOTE scope injection, _is_weak_patch_ks40's
-  extra trigger surface, and the reset-verify that skipped the patch check.
-
----------------------------------------------------------------------------
-KS38 header (unchanged base) = KS37 + completeness-first submission discipline.
+"""KingSlayer38 (KS38) = KS37 + completeness-first submission discipline.
 
 TARGET: live king UID 130 (mean 0.6851 over 15 duels). Dethrone threshold is
 challenger_mean >= ~0.735, i.e. ~35+/50 rounds at >=0.8 with <4 zeros. The
@@ -178,20 +150,16 @@ requirements is alignment, not noise.
 
 from __future__ import annotations
 
-import ast
 import json
 import os
 import re
-import shutil
 import signal
 import subprocess
-import sys
-import tempfile
 import time
 import traceback
 import urllib.error
 import urllib.request
-from dataclasses import dataclass, field, replace as _dc_replace
+from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
 COMPLETION_SENTINEL = "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT"
@@ -254,11 +222,12 @@ _ROUTE_PRELOAD_MAX_CHARS = 4000
 _ROUTE_PRELOAD_FILE_LIMIT = 2
 
 # Live duel wall = hard 300s SIGKILL; TAU_AGENT_TIMEOUT env is NOT passed to
-# solve() in live duels, so the fallback is what actually runs.
+# solve() in live duels, so the fallback is what actually runs. Rule (duel-7241
+# forensics, enforced by scripts/gate.sh): fallback MUST be 270.0 (300 - 30s
+# reserve) and reserve MUST be >= 30.0. KS38 shipped 280.0/10.0 (the float(28*10)
+# form was grep-evasion that also defeated gate.sh's budget guardrail); honest
+# literals here let that guardrail actually validate the budget. (KS39 R6 fix.)
 _BUDGET_ENV_KEY = "TAU_AGENT_" + "TIMEOUT" + "_SECONDS"
-# KS41: match the king exactly (agent/reroll.py runs a 280.0 fallback and the
-# king's loop reserves 20s inside the 300s SIGKILL). KS39's 270/30 was our own
-# convention, not a validator constraint, and cost 10s of solve time per round.
 _FALLBACK_WALL_CLOCK = 270.0
 _WALL_CLOCK_MARGIN = 30.0
 _WALL_CLOCK_RESERVE_SECONDS = 30.0
@@ -1819,372 +1788,6 @@ def _resolve_inference_config(
     return model_name, _normalize_api_base(base), key
 
 
-# ============================================================
-# KS41: king-faithful best-of-two reroll (port of agent/reroll.py)
-# ============================================================
-
-_KS41_SYMBOL_RE = re.compile(r"`([A-Za-z_][A-Za-z0-9_]{2,})`")
-
-_KS41_ATTEMPT2_MIN_REMAINING = 160.0   # king: ATTEMPT2_MIN_REMAINING
-_KS41_ATTEMPT2_MARGIN = 100.0          # king: ATTEMPT2_MARGIN
-_KS41_MATERIALIZE_MIN = 30.0           # king: 15.0; widened vs SIGKILL race
-_KS41_MIN_ATTEMPT2_WALL = 60.0         # king: _MIN_ATTEMPT2_WALL
-_KS41_GIT_TIMEOUT = 30                 # king: _GIT_TIMEOUT
-# Reroll tracer — set KS41_TRACE=/tmp/ks41_trace.jsonl to instrument decisions.
-# Each line is a JSON object: {task, fired, reason, key_a, key_b, adopted_b, elapsed}
-# Off by default in live duels (env var absent). Zero overhead when unset.
-_KS41_TRACE_PATH = os.environ.get("KS41_TRACE")
-
-
-@dataclass
-class _PatchInfoKS41:
-    nonempty: bool
-    py_parses: bool
-    touches_named_target: bool
-    named_reqs: int
-    is_trivial: bool
-
-
-def _git_out_ks41(repo: str, args: List[str]) -> Optional[str]:
-    try:
-        r = subprocess.run(
-            ["git", *args], cwd=repo, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=_KS41_GIT_TIMEOUT,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    if r.returncode != 0:
-        return None
-    return (r.stdout or "").strip()
-
-
-def _git_run_ks41(repo: str, args: List[str]) -> bool:
-    try:
-        r = subprocess.run(
-            ["git", *args], cwd=repo, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=_KS41_GIT_TIMEOUT,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return r.returncode == 0
-
-
-def _reset_verify_ks41(repo: str, orig_sha: str) -> bool:
-    """King's _reset_verify VERBATIM, including the _collect_repo_patch check
-    that KS40's version dropped (dirty-copy inheritance bug)."""
-    if not _git_run_ks41(repo, ["reset", "--hard", orig_sha]):
-        return False
-    _git_run_ks41(repo, ["clean", "-fd"])          # -fd, never -fdx
-    if _git_out_ks41(repo, ["rev-parse", "HEAD"]) != orig_sha:
-        return False
-    if _git_out_ks41(repo, ["status", "--porcelain"]) != "":
-        return False
-    try:
-        return _collect_repo_patch(repo).strip() == ""
-    except Exception:
-        return False
-
-
-def _git_apply_ks41(repo: str, patch_text: str) -> bool:
-    data = patch_text if patch_text.endswith("\n") else patch_text + "\n"
-    for extra in (["--whitespace=nowarn"], ["--3way", "--whitespace=nowarn"]):
-        try:
-            r = subprocess.run(
-                ["git", "apply", *extra], cwd=repo, input=data,
-                capture_output=True, text=True, encoding="utf-8",
-                errors="replace", timeout=_KS41_GIT_TIMEOUT, check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        if r.returncode == 0:  # NO --index -> changes stay unstaged
-            return True
-    return False
-
-
-def _materialize_ks41(repo: str, orig_sha: str, patch_text: str) -> bool:
-    """Reset primary to base, then git-apply the patch UNSTAGED. True only if
-    the on-disk diff is non-empty afterward. (King's _materialize verbatim.)"""
-    if not patch_text.strip():
-        return False
-    if not _git_run_ks41(repo, ["reset", "--hard", orig_sha]):
-        return False
-    _git_run_ks41(repo, ["clean", "-fd"])
-    if not _git_apply_ks41(repo, patch_text):
-        return False
-    try:
-        return bool(_collect_repo_patch(repo).strip())
-    except Exception:
-        return False
-
-
-def _named_tokens_ks41(issue_text: str) -> Tuple[set, set]:
-    text = issue_text or ""
-    files: set = set()
-    for m in _ISSUE_FILE_RE.finditer(text):
-        rel = (m.group(1) or "").strip().lstrip("./")
-        if rel:
-            files.add(rel)
-    syms = {m.group(1) for m in _KS41_SYMBOL_RE.finditer(text)}
-    return files, syms
-
-
-def _touched_paths_ks41(text: str) -> set:
-    paths: set = set()
-    for ln in text.splitlines():
-        if ln.startswith("+++ b/"):
-            p = ln[6:].strip()
-            if p and p != "/dev/null":
-                paths.add(p)
-        elif ln.startswith("--- a/"):
-            p = ln[6:].strip()
-            if p and p != "/dev/null":
-                paths.add(p)
-    return paths
-
-
-def _all_py_parse_ks41(repo: str, touched: set) -> bool:
-    for rel in touched:
-        if not rel.endswith(".py"):
-            continue
-        try:
-            with open(os.path.join(repo, rel), "r", encoding="utf-8",
-                      errors="replace") as fh:
-                src = fh.read()
-        except FileNotFoundError:
-            continue          # deleted file: nothing to parse
-        except OSError:
-            continue
-        try:
-            ast.parse(src)    # parse the WHOLE on-disk file, never the diff
-        except (SyntaxError, ValueError):
-            return False
-    return True
-
-
-def _touches_named_ks41(touched: set, named_files: set, added_blob: str,
-                        named_syms: set) -> bool:
-    base_named = {os.path.basename(f) for f in named_files}
-    for p in touched:
-        q = p.lstrip("./")
-        if p in named_files or q in named_files or os.path.basename(p) in base_named:
-            return True
-    for sym in named_syms:
-        if re.search(r"\b" + re.escape(sym) + r"\b", added_blob):
-            return True
-    return False
-
-
-def _named_reqs_ks41(touched: set, named_files: set, added_blob: str,
-                     named_syms: set) -> int:
-    file_hit = 0
-    base_named = {os.path.basename(f) for f in named_files}
-    for p in touched:
-        q = p.lstrip("./")
-        if p in named_files or q in named_files or os.path.basename(p) in base_named:
-            file_hit = 1
-            break
-    sym_hits = 0
-    for sym in named_syms:
-        if re.search(r"\b" + re.escape(sym) + r"\b", added_blob):
-            sym_hits += 1
-    return file_hit + sym_hits   # capped: junk can't inflate
-
-
-def _measure_ks41(repo: str, text: str, named_files: set,
-                  named_syms: set) -> _PatchInfoKS41:
-    """King's _measure() verbatim."""
-    nonempty = bool(text.strip())
-    touched = _touched_paths_ks41(text)
-    py_parses = _all_py_parse_ks41(repo, touched)
-    added = [ln[1:] for ln in text.splitlines()
-             if ln.startswith("+") and not ln.startswith("+++")]
-    added_blob = "\n".join(added)
-    substantive = 0
-    for ln in added:
-        s = ln.strip()
-        if s and len(s) >= 3 and not s.startswith("#"):
-            substantive += 1
-    is_trivial = substantive < 2
-    touched_named = _touches_named_ks41(touched, named_files, added_blob, named_syms)
-    named_reqs = _named_reqs_ks41(touched, named_files, added_blob, named_syms)
-    return _PatchInfoKS41(nonempty, py_parses, touched_named, named_reqs, is_trivial)
-
-
-def _is_weak_ks41(info: _PatchInfoKS41, multi_req: bool) -> bool:
-    """King's _is_weak() EXACTLY — four conditions, nothing more."""
-    return (
-        not info.nonempty
-        or not info.py_parses
-        or not info.touches_named_target
-        or (info.is_trivial and multi_req)
-    )
-
-
-def _key_ks41(info: _PatchInfoKS41) -> Tuple[int, int, int, int, int]:
-    """King's _key() verbatim: deterministic, size-excluded.
-
-    Test signal (Patch 3) deferred: pytest only covers Python repos; R16/R36
-    were TypeScript/PHP — the signal would return -1 on exactly the failures
-    it was meant to fix. Revisit after trace data shows reroll fire/adopt rates.
-    """
-    return (
-        int(info.nonempty),
-        int(info.py_parses),
-        int(info.touches_named_target),
-        info.named_reqs,
-        int(not info.is_trivial),
-    )
-
-
-def _outcome_on_disk_ks41(outcome: RunOutcome, repo: str) -> RunOutcome:
-    try:
-        patch = _collect_repo_patch(repo)
-    except Exception:
-        return outcome
-    return _dc_replace(outcome, patch=patch, success=bool(patch.strip()))
-
-
-def _floor_outcome_ks41(repo: str) -> RunOutcome:
-    try:
-        patch = _collect_repo_patch(repo)
-    except Exception:
-        patch = ""
-    return RunOutcome(
-        success=bool(patch.strip()),
-        patch=patch,
-        logs="",
-        steps=0,
-        cost=None,
-        message="reroll fell open to the on-disk repository diff",
-        exit_status="Submitted",
-    )
-
-
-def _trace_ks41(**fields) -> None:
-    """Append one JSON line per reroll decision. Never touches stdout: the
-    validator parses stdout, so a stray print corrupts the submission."""
-    if not _KS41_TRACE_PATH:
-        return
-    try:
-        with open(_KS41_TRACE_PATH, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(fields, sort_keys=True) + "\n")
-    except OSError as e:
-        print(f"[ks41-trace] could not write trace: {e}", file=sys.stderr)
-
-
-def _run_best_of_two_ks41(config: RunConfig, task: str, issue_text: str) -> RunOutcome:
-    """King's run_best_of_two() semantics, calling KS41's _run_loop.
-
-    Attempt #1 runs base config unchanged on the primary tree (never worse
-    than one KS39 draw). Attempt #2 fires only when #1 is weak by the king's
-    exact detector AND >=160s remain; it runs in an isolated copy and replaces
-    #1 only when STRICTLY better on the king's key. All failures fall open.
-    """
-    repo = getattr(config, "repo_dir", "") or ""
-    t0 = time.monotonic()
-    try:
-        budget = float(getattr(config, "wall_clock_limit", 0.0) or 0.0)
-    except (TypeError, ValueError):
-        budget = 0.0
-    if budget <= 0.0:
-        budget = _FALLBACK_WALL_CLOCK
-
-    # Pristine base sha + clean-start check BEFORE attempt #1 dirties the tree.
-    orig_sha = _git_out_ks41(repo, ["rev-parse", "HEAD"])
-    clean_start = (
-        orig_sha is not None and _git_out_ks41(repo, ["status", "--porcelain"]) == ""
-    )
-
-    # Attempt #1 == unchanged KS39 draw (config untouched, full wall).
-    try:
-        outcome_a = _run_loop(config, task)
-    except Exception:
-        return _floor_outcome_ks41(repo)
-
-    if not clean_start:
-        _trace_ks41(event="bail", why="not_clean_start")
-        return outcome_a
-
-    named_files, named_syms = _named_tokens_ks41(issue_text)
-    patch_a = outcome_a.patch or ""
-    try:
-        info_a = _measure_ks41(repo, patch_a, named_files, named_syms)
-    except Exception:
-        _trace_ks41(event="bail", why="measure_a_exception")
-        return outcome_a
-
-    multi_req = (len(named_files) + len(named_syms)) >= 2
-    remaining = budget - (time.monotonic() - t0)
-    weak = _is_weak_ks41(info_a, multi_req)
-    _trace_ks41(event="attempt1", weak=weak, multi_req=multi_req,
-                key_a=list(_key_ks41(info_a)), remaining=round(remaining, 1),
-                nonempty=info_a.nonempty, py_parses=info_a.py_parses,
-                touches_named=info_a.touches_named_target,
-                named_reqs=info_a.named_reqs, is_trivial=info_a.is_trivial)
-    if not weak or remaining < _KS41_ATTEMPT2_MIN_REMAINING:
-        _trace_ks41(event="no_reroll",
-                    why="not_weak" if not weak else "insufficient_budget")
-        return outcome_a
-
-    tmp_root = None
-    try:
-        tmp_root = tempfile.mkdtemp(prefix="ks41_reroll_")
-        copy_repo = os.path.join(tmp_root, "repo")
-        shutil.copytree(repo, copy_repo, symlinks=True)
-        if not _reset_verify_ks41(copy_repo, orig_sha):
-            _trace_ks41(event="bail", why="reset_verify_failed")
-            return outcome_a
-        remaining = budget - (time.monotonic() - t0)
-        if remaining < _KS41_ATTEMPT2_MIN_REMAINING:
-            _trace_ks41(event="bail", why="budget_after_copytree")
-            return outcome_a
-        attempt2_wall = max(_KS41_MIN_ATTEMPT2_WALL, remaining - _KS41_ATTEMPT2_MARGIN)
-        cfg2 = _dc_replace(config, repo_dir=copy_repo, wall_clock_limit=attempt2_wall)
-        try:
-            outcome_b = _run_loop(cfg2, task)
-        except Exception:
-            _trace_ks41(event="bail", why="run_loop_b_exception")
-            return outcome_a
-        patch_b = outcome_b.patch or ""
-        try:
-            info_b = _measure_ks41(copy_repo, patch_b, named_files, named_syms)
-        except Exception:
-            _trace_ks41(event="bail", why="measure_b_exception")
-            return outcome_a
-
-        key_a = _key_ks41(info_a)
-        key_b = _key_ks41(info_b)
-
-        if key_b <= key_a:
-            _trace_ks41(event="attempt2", key_a=list(key_a), key_b=list(key_b),
-                        landed="attempt1", why="key_not_better")
-            return outcome_a  # not strictly better -> keep #1, already on primary
-
-        if (budget - (time.monotonic() - t0)) < _KS41_MATERIALIZE_MIN:
-            _trace_ks41(event="attempt2", key_a=list(key_a), key_b=list(key_b),
-                        landed="attempt1", why="materialize_budget_exhausted")
-            return outcome_a  # too close to the kill to swap safely
-
-        if _materialize_ks41(repo, orig_sha, patch_b):
-            _trace_ks41(event="attempt2", key_a=list(key_a), key_b=list(key_b),
-                        landed="attempt2", why="adopted")
-            return _outcome_on_disk_ks41(outcome_b, repo)
-
-        # patch_b apply failed: restore the #1 floor.
-        _materialize_ks41(repo, orig_sha, patch_a)
-        _trace_ks41(event="attempt2", key_a=list(key_a), key_b=list(key_b),
-                    landed="attempt1", why="materialize_b_failed")
-        return _outcome_on_disk_ks41(outcome_a, repo)
-    except Exception:
-        _trace_ks41(event="bail", why="outer_exception")
-        return _outcome_on_disk_ks41(outcome_a, repo)
-    finally:
-        if tmp_root:
-            shutil.rmtree(tmp_root, ignore_errors=True)
-
-
 def solve(
     repo_path: str,
     issue: str,
@@ -2219,12 +1822,7 @@ def solve(
             wall_clock_limit=wall_clock_limit,
         )
         task = _build_initial_user_prompt(issue, repo_summary, preloaded)
-        # KS41: king-faithful conditional best-of-two. Any orchestrator-level
-        # failure falls back to a plain single KS39 draw.
-        try:
-            outcome = _run_best_of_two_ks41(config, task, issue)
-        except Exception:
-            outcome = _run_loop(config, task)
+        outcome = _run_loop(config, task)
 
         # KS32 change C: snapshot the collected patch before any sub-loop
         # touches the working tree; a valid patch, once produced, is never

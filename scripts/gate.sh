@@ -166,5 +166,16 @@ if [[ -n "$CHALLENGER_FILE" ]]; then
 fi
 
 # ── Step 3: forward to harness with verified king + king-sha ──────────────────
+# ── KS41_TRACE check ─────────────────────────────────────────────────────────
+# _KS41_TRACE_PATH is read at import time. KS41_TRACE must be exported BEFORE
+# Python starts — setting it inside a wrapper after import is too late.
+if [[ -n "$KS41_TRACE" ]]; then
+    echo "📝 KS41_TRACE enabled → $KS41_TRACE"
+    export KS41_TRACE
+else
+    echo "ℹ️  KS41_TRACE not set — reroll decisions will not be logged."
+    echo "   To instrument: export KS41_TRACE=/tmp/ks41_trace.jsonl before running gate.sh"
+fi
+
 echo "🚀 Launching gate: validator_harness_v7.py --king king_agent.py --king-sha ${LIVE_SHA:0:12}"
 exec python3 -u "$HARNESS" --king "$KING_FILE" --king-sha "${LIVE_SHA:0:12}" "${ARGS[@]}"
