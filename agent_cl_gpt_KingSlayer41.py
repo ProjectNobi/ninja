@@ -256,9 +256,12 @@ _ROUTE_PRELOAD_FILE_LIMIT = 2
 # Live duel wall = hard 300s SIGKILL; TAU_AGENT_TIMEOUT env is NOT passed to
 # solve() in live duels, so the fallback is what actually runs.
 _BUDGET_ENV_KEY = "TAU_AGENT_" + "TIMEOUT" + "_SECONDS"
-# KS41: match the king exactly (agent/reroll.py runs a 280.0 fallback and the
-# king's loop reserves 20s inside the 300s SIGKILL). KS39's 270/30 was our own
-# convention, not a validator constraint, and cost 10s of solve time per round.
+# Budget: 270/30 — settled policy, confirmed by duel-7241 forensics (2026-07-09).
+# Live duel SIGKILL = 300s hard. King's agent/reroll.py uses 280.0/20.0; we
+# use 270/30 to give a wider margin before SIGKILL. KS38 used float(28*10)=280
+# which evaded the old grep-based gate check — that evasion and the 280/20
+# choice both turned out to be wrong. 270/30 is the correct settled value.
+# Do not change without duel evidence and a gate.sh check_budget.py rerun.
 _FALLBACK_WALL_CLOCK = 270.0
 _WALL_CLOCK_MARGIN = 30.0
 _WALL_CLOCK_RESERVE_SECONDS = 30.0
@@ -2104,7 +2107,8 @@ def _run_best_of_two_ks41(config: RunConfig, task: str, issue_text: str) -> RunO
         return _floor_outcome_ks41(repo)
 
     if not clean_start:
-        _trace_ks41(event="bail", why="not_clean_start")
+        _trace_ks41(event="bail", why="not_clean_start",
+                    remaining=round(budget - (time.monotonic() - t0), 1))
         return outcome_a
 
     named_files, named_syms = _named_tokens_ks41(issue_text)
@@ -2112,7 +2116,8 @@ def _run_best_of_two_ks41(config: RunConfig, task: str, issue_text: str) -> RunO
     try:
         info_a = _measure_ks41(repo, patch_a, named_files, named_syms)
     except Exception:
-        _trace_ks41(event="bail", why="measure_a_exception")
+        _trace_ks41(event="bail", why="measure_a_exception",
+                    remaining=round(budget - (time.monotonic() - t0), 1))
         return outcome_a
 
     multi_req = (len(named_files) + len(named_syms)) >= 2
@@ -2125,7 +2130,8 @@ def _run_best_of_two_ks41(config: RunConfig, task: str, issue_text: str) -> RunO
                 named_reqs=info_a.named_reqs, is_trivial=info_a.is_trivial)
     if not weak or remaining < _KS41_ATTEMPT2_MIN_REMAINING:
         _trace_ks41(event="no_reroll",
-                    why="not_weak" if not weak else "insufficient_budget")
+                    why="not_weak" if not weak else "insufficient_budget",
+                    remaining=round(remaining, 1))
         return outcome_a
 
     tmp_root = None
@@ -2134,51 +2140,62 @@ def _run_best_of_two_ks41(config: RunConfig, task: str, issue_text: str) -> RunO
         copy_repo = os.path.join(tmp_root, "repo")
         shutil.copytree(repo, copy_repo, symlinks=True)
         if not _reset_verify_ks41(copy_repo, orig_sha):
-            _trace_ks41(event="bail", why="reset_verify_failed")
+            _trace_ks41(event="bail", why="reset_verify_failed",
+                        remaining=round(budget - (time.monotonic() - t0), 1))
             return outcome_a
         remaining = budget - (time.monotonic() - t0)
         if remaining < _KS41_ATTEMPT2_MIN_REMAINING:
-            _trace_ks41(event="bail", why="budget_after_copytree")
+            _trace_ks41(event="bail", why="budget_after_copytree",
+                        remaining=round(remaining, 1))
             return outcome_a
         attempt2_wall = max(_KS41_MIN_ATTEMPT2_WALL, remaining - _KS41_ATTEMPT2_MARGIN)
         cfg2 = _dc_replace(config, repo_dir=copy_repo, wall_clock_limit=attempt2_wall)
         try:
             outcome_b = _run_loop(cfg2, task)
         except Exception:
-            _trace_ks41(event="bail", why="run_loop_b_exception")
+            _trace_ks41(event="bail", why="run_loop_b_exception",
+                        remaining=round(budget - (time.monotonic() - t0), 1))
             return outcome_a
         patch_b = outcome_b.patch or ""
         try:
             info_b = _measure_ks41(copy_repo, patch_b, named_files, named_syms)
         except Exception:
-            _trace_ks41(event="bail", why="measure_b_exception")
+            _trace_ks41(event="bail", why="measure_b_exception",
+                        remaining=round(budget - (time.monotonic() - t0), 1))
             return outcome_a
 
         key_a = _key_ks41(info_a)
         key_b = _key_ks41(info_b)
+        remaining = budget - (time.monotonic() - t0)
 
         if key_b <= key_a:
             _trace_ks41(event="attempt2", key_a=list(key_a), key_b=list(key_b),
-                        landed="attempt1", why="key_not_better")
+                        landed="attempt1", why="key_not_better",
+                        remaining=round(remaining, 1))
             return outcome_a  # not strictly better -> keep #1, already on primary
 
-        if (budget - (time.monotonic() - t0)) < _KS41_MATERIALIZE_MIN:
+        if remaining < _KS41_MATERIALIZE_MIN:
             _trace_ks41(event="attempt2", key_a=list(key_a), key_b=list(key_b),
-                        landed="attempt1", why="materialize_budget_exhausted")
+                        landed="attempt1", why="materialize_budget_exhausted",
+                        remaining=round(remaining, 1))
             return outcome_a  # too close to the kill to swap safely
 
         if _materialize_ks41(repo, orig_sha, patch_b):
             _trace_ks41(event="attempt2", key_a=list(key_a), key_b=list(key_b),
-                        landed="attempt2", why="adopted")
+                        landed="attempt2", why="adopted",
+                        remaining=round(budget - (time.monotonic() - t0), 1))
             return _outcome_on_disk_ks41(outcome_b, repo)
 
         # patch_b apply failed: restore the #1 floor.
         _materialize_ks41(repo, orig_sha, patch_a)
         _trace_ks41(event="attempt2", key_a=list(key_a), key_b=list(key_b),
-                    landed="attempt1", why="materialize_b_failed")
+                    landed="attempt1", why="materialize_b_failed",
+                    remaining=round(budget - (time.monotonic() - t0), 1))
         return _outcome_on_disk_ks41(outcome_a, repo)
-    except Exception:
-        _trace_ks41(event="bail", why="outer_exception")
+    except Exception as e:
+        _trace_ks41(event="bail", why="outer_exception",
+                    err=type(e).__name__,
+                    remaining=round(budget - (time.monotonic() - t0), 1))
         return _outcome_on_disk_ks41(outcome_a, repo)
     finally:
         if tmp_root:
