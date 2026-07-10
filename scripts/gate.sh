@@ -169,7 +169,7 @@ fi
 # ── KS41_TRACE check ─────────────────────────────────────────────────────────
 # _KS41_TRACE_PATH is read at import time. KS41_TRACE must be exported BEFORE
 # Python starts — setting it inside a wrapper after import is too late.
-if [[ -n "$KS41_TRACE" ]]; then
+if [[ -n "${KS41_TRACE:-}" ]]; then
     echo "📝 KS41_TRACE enabled → $KS41_TRACE"
     export KS41_TRACE
 else

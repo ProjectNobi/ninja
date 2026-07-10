@@ -841,12 +841,17 @@ try:
         "cost":        float(result.get("cost") or 0.0),
         "patch":       str(result.get("patch", "")),
         "total_lines": total_lines,
+        # Agents that predate token accounting simply report 0.
+        "prompt_tokens":     int(result.get("prompt_tokens", 0) or 0),
+        "completion_tokens": int(result.get("completion_tokens", 0) or 0),
+        "total_tokens":      int(result.get("total_tokens", 0) or 0),
         "error":       None,
     }}))
 except Exception as e:
     print(json.dumps({{
         "success": False, "steps": 0, "cost": 0.0, "patch": "",
         "total_lines": 0,
+        "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
         "error": traceback.format_exc()[-300:],
     }}))
 """
@@ -1287,6 +1292,7 @@ def run_task_duel(
         result["challenger_error"]       = c.get("error")
         result["challenger_time"]        = round(time.time() - t0, 1)
         result["challenger_total_lines"] = c.get("total_lines", 0)
+        result["challenger_tokens"]      = c.get("total_tokens", 0)
 
         t0 = time.time()
         k  = run_agent(king_path, k_repo, issue, api_key=api_key,
@@ -1297,6 +1303,7 @@ def run_task_duel(
         result["king_error"]       = k.get("error")
         result["king_time"]        = round(time.time() - t0, 1)
         result["king_total_lines"] = k.get("total_lines", 0)
+        result["king_tokens"]      = k.get("total_tokens", 0)
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
         result["_tmp_dir"] = None
@@ -1336,6 +1343,29 @@ def run_task_duel(
 # ══════════════════════════════════════════════════════════════════════════════
 # 11. FULL DUEL RUNNER
 # ══════════════════════════════════════════════════════════════════════════════
+
+# All four KS42 gate runs (2026-07-09) died to one external kill at ~22:00 UTC:
+# 39/39/38/15 tasks completed at a near-identical 5.03-5.20 min/task, i.e. one
+# stop time, not four truncations. Results lived only in memory, so 131 completed
+# task duels were lost. Each result is now flushed as it lands, and a partial run
+# can be scored with scripts/score_partial.py instead of discarded.
+_RESULTS_JSONL = os.environ.get("GATE_RESULTS_JSONL", "")
+
+
+def _append_result_jsonl(r: Dict[str, Any]) -> None:
+    if not _RESULTS_JSONL:
+        return
+    try:
+        slim = {k: v for k, v in r.items()
+                if k not in ("challenger_repo", "king_repo", "base_repo", "_tmp_dir")}
+        with open(_RESULTS_JSONL, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(slim, default=str) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+    except Exception:
+        # Telemetry must never take the gate down.
+        pass
+
 
 def run_full_duel(
     challenger_path: str,
@@ -1473,6 +1503,7 @@ def run_full_duel(
                     "error": str(e),
                 }
             results.append(r)
+            _append_result_jsonl(r)
             print_task_result(r, actual_n)
             for _tmp_key in ["challenger_repo", "king_repo", "base_repo", "_tmp_dir"]:
                 _tmp_path = r.get(_tmp_key)
@@ -1546,6 +1577,32 @@ def run_full_duel(
     mean_flag = "✅ DETHRONE" if mean_dethrone else "❌ below 0.05"
     print(f"  Mean score delta:      ch={mean_ch:.4f} king={mean_kg:.4f} delta={mean_delta:+.4f}  [{mean_flag}]")
     print(f"  (Live dethrone: challenger_mean - king_mean >= 0.05 over 50 rounds)")
+
+    # The gate opponent is king_agent.py -- the unarbos/ninja burn baseline, the
+    # only king code that has ever been public. UID 130/215/180 are all private
+    # submissions with repo_url=null, so the real king cannot be fetched. In duel
+    # 768292 KS42 scored 0.3754 live against a king at 0.4198, having scored
+    # 0.3679 in gate against a burn baseline at 0.3308: our own score barely moved,
+    # the opponent's rose by ~0.089. So a gate delta overstates the live delta by
+    # roughly that much. PROVISIONAL: one duel, one 39/50 partial gate. Re-derive
+    # from a complete run before trusting the second decimal.
+    _BURN_BASELINE_OFFSET = 0.089
+    live_equiv = mean_delta - _BURN_BASELINE_OFFSET
+    calib_flag = "✅ would dethrone" if live_equiv >= _MEAN_SCORE_DETHRONE_MARGIN else "❌ would not"
+    print(f"  Burn-calibrated est.:  live_delta ≈ {live_equiv:+.4f}  [{calib_flag}]  "
+          f"(gate delta − {_BURN_BASELINE_OFFSET:.3f}; provisional)")
+    print(f"  Required gate delta to dethrone live: ≥ {_MEAN_SCORE_DETHRONE_MARGIN + _BURN_BASELINE_OFFSET:+.3f}")
+
+    ch_tok = sum(r.get("challenger_tokens", 0) or 0 for r in results)
+    kg_tok = sum(r.get("king_tokens", 0) or 0 for r in results)
+    n_r = len(results) or 1
+    if ch_tok or kg_tok:
+        tok_adv = ("ours leaner" if ch_tok < kg_tok else
+                   "king leaner" if kg_tok < ch_tok else "even")
+        print(f"  Tokens (total/round):  ours {ch_tok} ({ch_tok/n_r:.0f})  "
+              f"king {kg_tok} ({kg_tok/n_r:.0f})  → {tok_adv}")
+    else:
+        print(f"  Tokens:                not reported (agent predates token accounting)")
     print(f"  Reference source:      dir={n_ref_dir} r2={n_ref_r2} dir_miss_fallback={n_ref_miss}")
     print(f"  Judge fallbacks:       neutral={n_neutral} injection_autofail={n_injection}")
     print(f"  Elapsed:               {elapsed:.0f}s  |  Est. cost: ${total_cost:.4f}")
