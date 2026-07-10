@@ -218,3 +218,86 @@ Dethrone target: need **~0.53+ mean** (0.488 avg + 0.05 = 0.538).
 **All three plan docs (KS43_PLAN, KS43_AGENT_HISTORY, KS43_PLAN_V2) referenced UID 215 as current king. UID 180 is the correct target as of 07:25 UTC.**
 
 **Burn baseline calibration still holds:** burn opponent is still `king_agent.py` SHA `53bca97cbfe6`. The +0.089 offset was derived from UID 130 live vs burn gate. UID 180 is a new opponent — the offset may differ. First live duel against UID 180 will recalibrate.
+
+---
+
+## UID 180 DEEP INVESTIGATION — 2026-07-10 09:28 UTC
+
+### Identity
+| Field | Value |
+|-------|-------|
+| UID | **180** |
+| Hotkey | `5CJ3J7Dr39E36SDampXD3few3vdLXsgkumBV6EYUQLpwrdtd` |
+| Repo | `private-submission/5CJ3J7Dr39E36SDa` (no public URL) |
+| Took throne | 2026-07-10T07:25:50 UTC (duel 838438) |
+| Throne delta | +0.0618 vs UID 215 (100 rounds, W52-L37-T11) |
+
+### Score Profile (3 duels analysed, 200 rounds total)
+
+**As challenger (throne duel, 100 rounds vs UID 215):**
+- UID 180 mean: **0.4853** | UID 215 mean: 0.4252 | delta: +0.0601
+- Pool 1: UID 180 = 0.5014 | Pool 2: UID 180 = 0.4692
+- Score spread: 10× zero, 13× low (<0.25), 31× mid (0.25–0.74), 31× high (0.75+)
+
+**As king (2 defenses, same 50-task pool each time):**
+| Defense | vs UID | UID 180 mean | Ch mean | Delta |
+|---------|--------|-------------|---------|-------|
+| db=417 | 231 | 0.4786 | 0.4788 | **+0.0002** (survived by a whisker) |
+| db=418 | 9 | 0.4880 | 0.4776 | −0.0104 |
+
+King avg across 2 defenses: **0.4833**
+
+### Task Profile (50 tasks × 2 defenses = 100 data points)
+
+**Pattern breakdown:**
+- 🏰 **Fortress** (UID 180 beats both challengers): **11 tasks**, avg king score 0.676
+- ⚠️ **Exploitable** (both challengers beat UID 180): **11 tasks**, avg king score 0.344
+- ↔️ Mixed: 25 tasks
+- ⚖️ Both-zero: 3 tasks
+
+**Top fortress tasks (king's moat — must beat these to dethrone):**
+| Task | King avg | Ch avg | Gap |
+|------|---------|--------|-----|
+| task-20a3163d979c | 0.850 | 0.150 | +0.700 |
+| task-4dba1bc9bac4 | 0.710 | 0.225 | +0.485 |
+| task-e8b02ed6306c | 0.550 | 0.075 | +0.475 |
+| task-29214a9ab995 | 0.815 | 0.450 | +0.365 |
+| task-cbc7d398420e | 0.835 | 0.475 | +0.360 |
+
+**Exploitable tasks (king consistently scores low — attack surface):**
+| Task | King avg | Ch avg | Gap |
+|------|---------|--------|-----|
+| task-b2c2f44aa0dd | 0.050 | 0.600 | −0.550 |
+| task-2fbc7b41d794 | 0.325 | 0.850 | −0.525 |
+| task-ee48ece7d8bc | 0.000 | 0.400 | −0.400 |
+| task-62b11059e772 | 0.125 | 0.425 | −0.300 |
+| task-3bedca644f41 | 0.125 | 0.350 | −0.225 |
+| task-3a01cebd40bb | 0.135 | 0.330 | −0.195 |
+| task-9b279deee2fb | 0.750 | 0.925 | −0.175 |
+| task-036ef7bc7c7c | 0.725 | 0.855 | −0.130 |
+
+### Dethrone Analysis
+
+**Current bar:** UID 180 avg = 0.4833 → need **≥0.5333 challenger mean**
+
+**Burn baseline offset (working constant from Hung):**
+Gate delta needed vs burn ≈ **+0.14** (burn is ~0.089 weaker than live king)
+
+**Path to dethrone:**
+UID 180 has 11 clearly exploitable tasks where it scores 0.34 avg.
+If a challenger scores 0.80+ on those 11 exploit tasks, that's +0.132 mean gain → total ~0.61 mean. Comfortably dethroning.
+The 11 fortress tasks (0.676 avg) are harder — need to be competitive there too, not win them.
+
+**Key weakness:** db=417 survival margin was **+0.0002** — UID 231 came within a rounding error of dethroning on the first defense. UID 180 is beatable now.
+
+### Comparison: King Score Progression
+
+| King | Defenses sampled | Avg mean | Min | Max | Notes |
+|------|-----------------|----------|-----|-----|-------|
+| UID 130 (old) | 27 | 0.636 | 0.386 | 0.800 | Pre+post cull; dropped post-cull |
+| UID 215 | 11 | 0.444 | 0.401 | 0.535 | Post-cull only |
+| **UID 180** | **2** | **0.483** | **0.479** | **0.488** | Post-cull, very consistent |
+
+UID 180 is slightly stronger than UID 215 but still post-cull range.
+Its consistency (0.479–0.488 across 50 tasks repeated) suggests a stable harness —
+not a high-variance agent that sometimes flukes high scores.
