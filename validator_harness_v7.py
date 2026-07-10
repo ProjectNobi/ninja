@@ -1508,7 +1508,15 @@ def run_full_duel(
     # both means silently collapsed to 0.5 and the dethrone signal was always False.
     # Read from the top-level result dict, which is populated for BOTH the normal
     # path (run_task_duel) and the exception-fallback path (run_full_duel).
-    _MEAN_SCORE_DETHRONE_MARGIN = 0.05
+    # ⚠️  MARGIN UPDATE 2026-07-10 12:37 UTC (db=422): SN66 raised the dethrone
+    # threshold from 0.05 to 0.10. Confirmed from live API mean_score_margin field.
+    # All duels db>=422 require challenger_mean - king_mean >= 0.10 to dethrone.
+    # Current king: UID 237 (5FBtMWYfrVLAFCefPF2LdeSgom3y9GqzFM1mm12oVQag7etA)
+    # King avg mean: 0.4874 (3 defenses, 200 rounds)
+    # Dethrone bar:  0.5874 challenger mean
+    # Burn offset:   +0.089 (working constant, Hung 2026-07-10)
+    # Gate bar:      gate delta >= +0.189 vs burn baseline (was +0.139 at margin=0.05)
+    _MEAN_SCORE_DETHRONE_MARGIN = 0.10
     ch_scores = [r.get("llm_score_challenger", 0.5) for r in results]
     kg_scores = [r.get("llm_score_king", 0.5)       for r in results]
     mean_ch = sum(ch_scores) / len(ch_scores) if ch_scores else 0.0
@@ -1543,9 +1551,15 @@ def run_full_duel(
     print(f"  Cursor-sim avg (telemetry): ours {avg_c:.3f} | king {avg_k:.3f}  {c_adv_str}")
     print(f"  Decisive win rate:     {decisive_wr*100:.1f}%  ({wins}W-{losses}L-{ties}T)")
     print(f"  95% CI (Wilson):       [{ci_lo*100:.1f}%, {ci_hi*100:.1f}%]")
-    mean_flag = "✅ DETHRONE" if mean_dethrone else "❌ below 0.05"
+    mean_flag = ("✅ DETHRONE" if mean_dethrone
+                 else f"❌ below {_MEAN_SCORE_DETHRONE_MARGIN}")
+    burn_live_estimate = mean_delta - 0.089  # working constant: burn baseline ~0.089 weaker than live king
+    burn_flag = ("✅ gate bar met" if mean_delta >= (0.089 + _MEAN_SCORE_DETHRONE_MARGIN)
+                 else f"❌ need +{0.089 + _MEAN_SCORE_DETHRONE_MARGIN:.3f} vs burn")
     print(f"  Mean score delta:      ch={mean_ch:.4f} king={mean_kg:.4f} delta={mean_delta:+.4f}  [{mean_flag}]")
-    print(f"  (Live dethrone: challenger_mean - king_mean >= 0.05 over 50 rounds)")
+    print(f"  (Live dethrone: challenger_mean - king_mean >= {_MEAN_SCORE_DETHRONE_MARGIN} — UPDATED 2026-07-10)")
+    print(f"  Burn-calibrated est:   live delta ≈ {burn_live_estimate:+.4f}  [{burn_flag}]")
+    print(f"  Current king: UID 237 (avg 0.4874) | dethrone bar: 0.5874 | gate bar: +0.189 vs burn")
     print(f"  Reference source:      dir={n_ref_dir} r2={n_ref_r2} dir_miss_fallback={n_ref_miss}")
     print(f"  Judge fallbacks:       neutral={n_neutral} injection_autofail={n_injection}")
     print(f"  Elapsed:               {elapsed:.0f}s  |  Est. cost: ${total_cost:.4f}")
