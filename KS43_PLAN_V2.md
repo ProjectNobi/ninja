@@ -191,3 +191,30 @@ UID 130, UID 215, UID 180 are all `private-submission/…` with `repo_url: null`
 | KS41 "leaner than KS42" | ❌ KS41 reroll calls _run_loop twice at full max_steps — most expensive |
 | KS42 UPDATE: 5W-2L | ❌ Actual: 0W-4L (0%) |
 | Gate logs reach 50/50 | ❌ All 4 partial (killed by cull deployment ~22:00 UTC Jul 9) |
+
+---
+
+## ⚠️ KING UPDATE — 2026-07-10 07:25:50 UTC
+
+**UID 215 dethroned. New King = UID 180.**
+
+| Field | Value |
+|-------|-------|
+| New King UID | **180** |
+| Hotkey | `5CJ3J7Dr39E36SDampXD3few3vdLXsgkumBV6EYUQLpwrdtd` |
+| Repo | `private-submission/5CJ3J7Dr39E36SDa` (no public URL) |
+| Throne duel | 838438, db_duel_id=416 |
+| Took throne | 2026-07-10T07:25:50 UTC |
+| Winning delta | +0.0618 (100 rounds, W=52 L=37 T=11) |
+| UID 215 mean | 0.4074 | UID 180 mean | 0.4692 |
+
+**UID 180 defense record so far (2 duels):**
+- db=417: vs UID 231 → k=0.4786 ch=0.4788 delta=+0.0002 ✅ (survived by 0.0002)
+- db=418: vs UID 9   → k=0.4880 ch=0.4776 delta=−0.0104 ✅
+
+New King scoring ~0.47–0.49 mean — slightly higher than UID 215 (~0.44).
+Dethrone target: need **~0.53+ mean** (0.488 avg + 0.05 = 0.538).
+
+**All three plan docs (KS43_PLAN, KS43_AGENT_HISTORY, KS43_PLAN_V2) referenced UID 215 as current king. UID 180 is the correct target as of 07:25 UTC.**
+
+**Burn baseline calibration still holds:** burn opponent is still `king_agent.py` SHA `53bca97cbfe6`. The +0.089 offset was derived from UID 130 live vs burn gate. UID 180 is a new opponent — the offset may differ. First live duel against UID 180 will recalibrate.
