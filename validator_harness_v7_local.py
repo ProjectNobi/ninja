@@ -730,8 +730,25 @@ def run_agent(
                 "total_lines": 0,
                 "error": f"no_json_output. stderr={stderr_snip[:150]}"}
     except subprocess.TimeoutExpired:
-        return {"success": False, "steps": 0, "cost": 0.0, "patch": "",
-                "total_lines": 0, "error": f"timeout_{timeout}s"}
+        # Live-accuracy fix: the real validator collects the patch by reading
+        # the repo's on-disk `git diff` (get_patch), so an agent SIGKILL'd at
+        # the wall still submits whatever it wrote to disk. This local runner
+        # used to read the patch only from solve()'s return value and so scored
+        # every timeout a bare 0.00 -- penalising tasks the agent would NOT
+        # zero live. Recover the on-disk diff (modified + intent-to-add new
+        # files) exactly as the agent's own _collect_repo_patch would.
+        timeout_patch = ""
+        try:
+            subprocess.run(["git", "-C", repo_path, "add", "-N", "."],
+                           capture_output=True, text=True, timeout=30, check=False)
+            diff = subprocess.run(["git", "-C", repo_path, "diff"],
+                                  capture_output=True, text=True, timeout=30, check=False)
+            timeout_patch = diff.stdout or ""
+        except Exception:
+            timeout_patch = ""
+        return {"success": bool(timeout_patch.strip()), "steps": 0, "cost": 0.0,
+                "patch": timeout_patch, "total_lines": 0,
+                "error": f"timeout_{timeout}s_ondisk_{'recovered' if timeout_patch.strip() else 'empty'}"}
     except Exception as e:
         return {"success": False, "steps": 0, "cost": 0.0, "patch": "",
                 "total_lines": 0, "error": str(e)[:200]}
